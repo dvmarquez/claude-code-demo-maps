@@ -1,1025 +1,856 @@
 # Casos de Prueba — Maps Demo
 
-**Versión:** 1.0
-**Fecha:** 2026-05-07
-**Branch:** feature/maps-autocomplete-geocode-history
-**Spec de referencia:** `docs/specs/MAPS_AUTOCOMPLETE_GEOCODE_HISTORY.md`
+Fecha: 2026-05-22
+Branch: feature/maps-autocomplete-geocode-history
+Spec de referencia: `docs/specs/MAPS_AUTOCOMPLETE_GEOCODE_HISTORY.md`
 
 ---
 
-## Convenciones
+## Índice
 
-| Columna | Descripción |
-|---------|-------------|
-| **ID** | Identificador único del caso |
-| **Prioridad** | Alta / Media / Baja |
-| **Tipo** | Funcional / Borde / Negativo / Seguridad / UI |
-| **Estado** | Pendiente / Pasó / Falló / Bloqueado |
-
-> **Nota de issues conocidos:** Los casos marcados con ⚠️ están relacionados con issues identificados en `docs/reviews/code-quality-review.md` o `docs/reviews/accessibility-review.md` y pueden fallar hasta que sean corregidos.
-
----
-
-## Prerequisitos
-
-Antes de ejecutar cualquier caso de prueba verificar:
-
-1. Docker Compose corriendo: `docker ps` debe mostrar `claude_code_demo_postgres` en estado `healthy`
-2. Backend corriendo en `http://localhost:5000`
-3. Frontend corriendo en `http://localhost:5173`
-4. Variable `GOOGLE_MAPS_API_KEY` configurada en `.env`
-5. Tabla `geocode_queries` existente en la base de datos (migración aplicada)
+1. [POST /api/maps/autocomplete](#1-post-apimapsautocomplete)
+2. [POST /api/maps/geocode](#2-post-apimapsgeocode)
+3. [GET /api/maps/history](#3-get-apimapshistory)
+4. [Flujo completo de integración](#4-flujo-completo-de-integración)
+5. [Frontend — SearchBox](#5-frontend--searchbox)
+6. [Frontend — MapPortlet](#6-frontend--mapportlet)
+7. [Frontend — HistoryTable y DateFilter](#7-frontend--historytable-y-datefilter)
 
 ---
 
-## Suite 1 — POST /api/maps/autocomplete
+## 1. POST /api/maps/autocomplete
 
-### TC-001 — Autocomplete retorna sugerencias para input válido
-**Prioridad:** Alta | **Tipo:** Funcional | **Estado:** Pendiente
+**URL:** `POST http://localhost:5000/api/maps/autocomplete`
+**Content-Type:** `application/json`
 
-**Precondiciones:** Backend activo, API key configurada.
+### TC-AC-01 — Búsqueda con input válido retorna sugerencias
+
+**Precondición:** Backend corriendo, `GOOGLE_MAPS_API_KEY` configurada.
 
 **Request:**
-```http
-POST http://localhost:5000/api/maps/autocomplete
-Content-Type: application/json
-
+```json
 {
-  "input": "Av. Amazonas Quito",
-  "sessionToken": "a1b2c3d4-0000-0000-0000-000000000001"
+  "input": "Av. Amazonas, Quito",
+  "sessionToken": "550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
 **Resultado esperado:**
 - HTTP 200
-- Body: array JSON con al menos 1 elemento
-- Cada elemento contiene `placeId` (string no vacío) y `description` (string no vacío)
-- `description` incluye texto relacionado con "Amazonas" o "Quito"
-
-**Resultado actual:** _______________
+- Body: array JSON con al menos un elemento
+- Cada elemento tiene `placeId` (string no vacío) y `description` (string no vacío)
+- `description` contiene texto relacionado a la búsqueda
 
 ---
 
-### TC-002 — Autocomplete retorna array vacío para input sin coincidencias
-**Prioridad:** Media | **Tipo:** Funcional | **Estado:** Pendiente
+### TC-AC-02 — Búsqueda con input corto retorna sugerencias (comportamiento actual)
+
+**Precondición:** Backend corriendo.
 
 **Request:**
-```http
-POST http://localhost:5000/api/maps/autocomplete
-Content-Type: application/json
-
+```json
 {
-  "input": "xkqzwvmplaceinexistente9999",
-  "sessionToken": "a1b2c3d4-0000-0000-0000-000000000002"
+  "input": "Av",
+  "sessionToken": "550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
 **Resultado esperado:**
-- HTTP 200
-- Body: `[]` (array vacío, no error)
+- HTTP 200 con sugerencias (comportamiento actual del backend)
 
-**Resultado actual:** _______________
+> **Nota:** El spec y la revisión de calidad identifican que debería retornar 400 para inputs menores a 3 caracteres. Este caso documenta el comportamiento actual y servirá para validar la corrección futura.
 
 ---
 
-### TC-003 — Autocomplete rechaza input vacío
-**Prioridad:** Alta | **Tipo:** Negativo | **Estado:** Pendiente
+### TC-AC-03 — Input vacío retorna 400
 
 **Request:**
-```http
-POST http://localhost:5000/api/maps/autocomplete
-Content-Type: application/json
-
+```json
 {
   "input": "",
-  "sessionToken": "a1b2c3d4-0000-0000-0000-000000000003"
+  "sessionToken": "550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
 **Resultado esperado:**
 - HTTP 400
-- Body incluye campo de error (title o detail)
-- No se realiza ninguna llamada a Google Places API
-
-**Resultado actual:** _______________
+- Body contiene `title` con descripción del error
 
 ---
 
-### TC-004 — Autocomplete rechaza input de solo espacios
-**Prioridad:** Media | **Tipo:** Negativo | **Estado:** Pendiente
+### TC-AC-04 — Input solo espacios retorna 400
 
 **Request:**
-```http
-POST http://localhost:5000/api/maps/autocomplete
-Content-Type: application/json
-
+```json
 {
   "input": "   ",
-  "sessionToken": "a1b2c3d4-0000-0000-0000-000000000004"
+  "sessionToken": "550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
 **Resultado esperado:**
 - HTTP 400
 
-**Resultado actual:** _______________
-
 ---
 
-### TC-005 ⚠️ — Autocomplete con input de 1 y 2 caracteres
-**Prioridad:** Alta | **Tipo:** Borde | **Estado:** Pendiente
-
-> ⚠️ Issue crítico conocido: no existe validación de longitud mínima (ver `code-quality-review.md` issue #2). Este caso **debería** fallar (retornar 400) pero actualmente llama a Places API.
-
-**Request A (1 carácter):**
-```http
-POST http://localhost:5000/api/maps/autocomplete
-Content-Type: application/json
-
-{ "input": "Q", "sessionToken": "a1b2c3d4-0000-0000-0000-000000000005" }
-```
-
-**Request B (2 caracteres):**
-```http
-POST http://localhost:5000/api/maps/autocomplete
-Content-Type: application/json
-
-{ "input": "Qu", "sessionToken": "a1b2c3d4-0000-0000-0000-000000000005" }
-```
-
-**Resultado esperado (post-fix):**
-- HTTP 400 para inputs de menos de 3 caracteres
-- Mensaje: "Input must be at least 3 characters"
-
-**Resultado actual:** _______________
-
----
-
-### TC-006 — Autocomplete con input de exactamente 3 caracteres
-**Prioridad:** Media | **Tipo:** Borde | **Estado:** Pendiente
+### TC-AC-05 — Input nulo retorna 400
 
 **Request:**
-```http
-POST http://localhost:5000/api/maps/autocomplete
-Content-Type: application/json
-
-{ "input": "Qui", "sessionToken": "a1b2c3d4-0000-0000-0000-000000000006" }
-```
-
-**Resultado esperado:**
-- HTTP 200
-- Array con sugerencias (puede estar vacío si no hay coincidencias)
-
-**Resultado actual:** _______________
-
----
-
-### TC-007 — Autocomplete sin campo sessionToken
-**Prioridad:** Media | **Tipo:** Borde | **Estado:** Pendiente
-
-**Request:**
-```http
-POST http://localhost:5000/api/maps/autocomplete
-Content-Type: application/json
-
-{ "input": "Quito" }
-```
-
-**Resultado esperado:**
-- HTTP 200 con sugerencias (el sessionToken es opcional para la llamada a Places API)
-- O HTTP 400 si se decide requerirlo en el futuro
-
-**Resultado actual:** _______________
-
----
-
-### TC-008 — Autocomplete no persiste en base de datos
-**Prioridad:** Alta | **Tipo:** Funcional | **Estado:** Pendiente
-
-**Pasos:**
-1. Anotar el `totalCount` de `GET /api/maps/history`
-2. Llamar a `POST /api/maps/autocomplete` con input válido
-3. Volver a llamar a `GET /api/maps/history`
-
-**Resultado esperado:**
-- El `totalCount` es idéntico antes y después del autocomplete
-- La tabla `geocode_queries` no tiene nuevas filas
-
-**Resultado actual:** _______________
-
----
-
-### TC-009 — Autocomplete incluye sessionToken en llamada a Google
-**Prioridad:** Media | **Tipo:** Funcional | **Estado:** Pendiente
-
-**Pasos:**
-1. Llamar al endpoint con un `sessionToken` conocido
-2. Revisar logs del backend para verificar que el token se envió a Google
-
-**Resultado esperado:**
-- El payload enviado a `places.googleapis.com` incluye el `sessionToken` proporcionado
-
-**Resultado actual:** _______________
-
----
-
-## Suite 2 — POST /api/maps/geocode
-
-### TC-010 — Geocode retorna coordenadas para placeId válido
-**Prioridad:** Alta | **Tipo:** Funcional | **Estado:** Pendiente
-
-**Request:**
-```http
-POST http://localhost:5000/api/maps/geocode
-Content-Type: application/json
-
+```json
 {
-  "placeId": "ChIJn3xCAkCa1ZERclXvWOGRuUQ",
-  "address": "Quito, Ecuador",
-  "sessionToken": "a1b2c3d4-0000-0000-0000-000000000010"
+  "input": null,
+  "sessionToken": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+**Resultado esperado:**
+- HTTP 400
+
+---
+
+### TC-AC-06 — SessionToken ausente — comportamiento actual
+
+**Request:**
+```json
+{
+  "input": "Quito"
+}
+```
+
+**Resultado esperado:**
+- HTTP 200 con sugerencias (sessionToken es enviado como null a Google)
+
+> **Nota:** La revisión de calidad indica que el sessionToken debería validarse como UUID v4. Este caso documenta el comportamiento actual.
+
+---
+
+### TC-AC-07 — Request body malformado retorna error
+
+**Request:** body inválido (no JSON)
+```
+this is not json
+```
+
+**Resultado esperado:**
+- HTTP 400 o HTTP 415
+
+---
+
+### TC-AC-08 — Búsqueda no encuentra resultados retorna array vacío
+
+**Request:**
+```json
+{
+  "input": "xkqzwmvnpqrst12345nonexistent",
+  "sessionToken": "550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
 **Resultado esperado:**
 - HTTP 200
-- Body contiene: `id` (UUID), `address` (string), `latitude` (decimal), `longitude` (decimal), `queriedAt` (ISO 8601)
-- `latitude` está en rango [-90, 90] y `longitude` en rango [-180, 180]
-- `address` coincide con el enviado en el request
-
-**Resultado actual:** _______________
+- Body: `[]` (array vacío)
 
 ---
 
-### TC-011 — Geocode persiste el registro en PostgreSQL
-**Prioridad:** Alta | **Tipo:** Funcional | **Estado:** Pendiente
+### TC-AC-09 — El endpoint no persiste en la base de datos
 
-**Pasos:**
-1. Anotar el `totalCount` de `GET /api/maps/history`
-2. Llamar a `POST /api/maps/geocode` con placeId válido
-3. Capturar el `id` del response
-4. Consultar `GET /api/maps/history`
+**Precondición:** Registrar el total de filas en `geocode_queries` antes de la llamada.
+
+**Acción:** Ejecutar TC-AC-01.
 
 **Resultado esperado:**
-- `totalCount` se incrementa en 1
-- El primer elemento de `data` tiene el mismo `id` retornado por geocode
-- `latitude`, `longitude` y `address` coinciden
-
-**Resultado actual:** _______________
+- El total de filas en `geocode_queries` no aumenta.
 
 ---
 
-### TC-012 — Geocode rechaza placeId vacío
-**Prioridad:** Alta | **Tipo:** Negativo | **Estado:** Pendiente
+### TC-AC-10 — Llamadas con el mismo sessionToken agrupan sesión de facturación
+
+**Acción:** Ejecutar tres llamadas a `/autocomplete` usando el mismo `sessionToken`.
+
+**Resultado esperado:**
+- HTTP 200 en las tres llamadas
+- Las tres comparten el mismo `sessionToken` en las requests a Google (verificable en logs del servidor)
+
+---
+
+## 2. POST /api/maps/geocode
+
+**URL:** `POST http://localhost:5000/api/maps/geocode`
+**Content-Type:** `application/json`
+
+### TC-GC-01 — Geocodificación exitosa retorna coordenadas y persiste en BD
+
+**Precondición:** Obtener un `placeId` válido desde TC-AC-01.
 
 **Request:**
-```http
-POST http://localhost:5000/api/maps/geocode
-Content-Type: application/json
+```json
+{
+  "placeId": "EhxBdi4gQW1hem9uYXMsIFF1aXRvLCBFY3VhZG9yIi4q...",
+  "address": "Av. Amazonas, Quito, Ecuador",
+  "sessionToken": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
 
+**Resultado esperado:**
+- HTTP 200
+- Body:
+  ```json
+  {
+    "id": "<uuid>",
+    "address": "Av. Amazonas, Quito, Ecuador",
+    "latitude": <decimal>,
+    "longitude": <decimal>,
+    "queriedAt": "<ISO 8601 con timezone>"
+  }
+  ```
+- `id` es un UUID v4 válido
+- `latitude` está en rango [-90, 90]
+- `longitude` está en rango [-180, 180]
+- `queriedAt` es una fecha en UTC reciente (dentro de los últimos 5 segundos)
+
+**Verificación en BD:**
+```sql
+SELECT * FROM geocode_queries WHERE id = '<id retornado>';
+```
+- Fila existe con todos los campos completos
+- `request_payload` y `response_payload` son JSON válidos no nulos
+
+---
+
+### TC-GC-02 — PlaceId vacío retorna 400
+
+**Request:**
+```json
 {
   "placeId": "",
-  "address": "Quito, Ecuador",
-  "sessionToken": "a1b2c3d4-0000-0000-0000-000000000012"
+  "address": "Av. Amazonas, Quito, Ecuador",
+  "sessionToken": "550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
 **Resultado esperado:**
 - HTTP 400
-- No se persiste nada en la base de datos
-
-**Resultado actual:** _______________
+- Body contiene `title` con descripción del error
 
 ---
 
-### TC-013 — Geocode rechaza placeId de solo espacios
-**Prioridad:** Media | **Tipo:** Negativo | **Estado:** Pendiente
+### TC-GC-03 — PlaceId nulo retorna 400
 
 **Request:**
-```http
-POST http://localhost:5000/api/maps/geocode
-Content-Type: application/json
-
+```json
 {
-  "placeId": "   ",
-  "address": "Test",
-  "sessionToken": "a1b2c3d4-0000-0000-0000-000000000013"
+  "placeId": null,
+  "address": "Av. Amazonas, Quito, Ecuador",
+  "sessionToken": "550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
 **Resultado esperado:**
 - HTTP 400
 
-**Resultado actual:** _______________
-
 ---
 
-### TC-014 — Geocode con placeId inválido retorna 502
-**Prioridad:** Alta | **Tipo:** Negativo | **Estado:** Pendiente
+### TC-GC-04 — PlaceId inválido (no reconocido por Google) retorna 502
 
 **Request:**
-```http
-POST http://localhost:5000/api/maps/geocode
-Content-Type: application/json
-
+```json
 {
-  "placeId": "INVALID_PLACE_ID_DOES_NOT_EXIST",
+  "placeId": "INVALID_PLACE_ID_THAT_DOES_NOT_EXIST",
   "address": "Dirección inválida",
-  "sessionToken": "a1b2c3d4-0000-0000-0000-000000000014"
+  "sessionToken": "550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
 **Resultado esperado:**
 - HTTP 502
-- Body: ProblemDetails con `detail` o `title` descriptivo
-- No se persiste nada en la base de datos
+- Body contiene detalle del error de Google Maps
 
-**Resultado actual:** _______________
-
----
-
-### TC-015 ⚠️ — Geocode con placeId que retorna results vacío de Google
-**Prioridad:** Alta | **Tipo:** Borde | **Estado:** Pendiente
-
-> ⚠️ Issue crítico conocido: acceso a `results[0]` sin verificar que el array no esté vacío (ver `code-quality-review.md` issue #5). Este caso puede lanzar `IndexOutOfRangeException`.
-
-**Escenario:** Google responde con `{"status": "OK", "results": []}` (situación poco común pero posible).
-
-**Resultado esperado (post-fix):**
-- HTTP 502 con ProblemDetails descriptivo
-- No se persiste nada
-
-**Resultado actual:** _______________
+**Verificación en BD:** No se persiste ninguna fila nueva.
 
 ---
 
-### TC-016 ⚠️ — Geocode con address que supera 500 caracteres
-**Prioridad:** Media | **Tipo:** Borde | **Estado:** Pendiente
-
-> ⚠️ Issue conocido: sin validación de longitud de `Address` (ver `code-quality-review.md` issue #4). EF Core puede lanzar excepción al intentar persistir.
+### TC-GC-05 — Request sin `address` persiste con address vacío o nulo
 
 **Request:**
-```http
-POST http://localhost:5000/api/maps/geocode
-Content-Type: application/json
-
-{
-  "placeId": "ChIJn3xCAkCa1ZERclXvWOGRuUQ",
-  "address": "[string de 501 caracteres]",
-  "sessionToken": "a1b2c3d4-0000-0000-0000-000000000016"
-}
-```
-
-**Resultado esperado (post-fix):**
-- HTTP 400 con mensaje de validación
-
-**Resultado actual:** _______________
-
----
-
-### TC-017 — Geocode con address vacío
-**Prioridad:** Media | **Tipo:** Borde | **Estado:** Pendiente
-
-**Request:**
-```http
-POST http://localhost:5000/api/maps/geocode
-Content-Type: application/json
-
-{
-  "placeId": "ChIJn3xCAkCa1ZERclXvWOGRuUQ",
-  "address": "",
-  "sessionToken": "a1b2c3d4-0000-0000-0000-000000000017"
-}
-```
-
-**Resultado esperado:**
-- HTTP 400, o bien la coordenada se persiste con `address = ""` (comportamiento actual — a definir si es aceptable)
-
-**Resultado actual:** _______________
-
----
-
-### TC-018 — Geocode guarda request_payload y response_payload como JSONB válido
-**Prioridad:** Media | **Tipo:** Funcional | **Estado:** Pendiente
-
-**Pasos:**
-1. Llamar a `POST /api/maps/geocode` con placeId válido
-2. Capturar el `id` del response
-3. Consultar directamente en PostgreSQL:
-   ```sql
-   SELECT request_payload, response_payload
-   FROM geocode_queries
-   WHERE id = '<id-del-response>';
-   ```
-
-**Resultado esperado:**
-- `request_payload` es JSON válido con campos `placeId` y `address`
-- `response_payload` es JSON válido (el response completo de Google Geocoding API)
-- Ambos campos son de tipo JSONB (se pueden consultar con operadores `->`, `->>`))
-
-**Resultado actual:** _______________
-
----
-
-## Suite 3 — GET /api/maps/history
-
-### TC-019 — History retorna lista vacía cuando no hay registros
-**Prioridad:** Alta | **Tipo:** Funcional | **Estado:** Pendiente
-
-**Precondición:** Tabla `geocode_queries` vacía (limpiar con `DELETE FROM geocode_queries;` en entorno de prueba limpio).
-
-**Request:**
-```http
-GET http://localhost:5000/api/maps/history
-```
-
-**Resultado esperado:**
 ```json
 {
-  "data": [],
-  "page": 1,
-  "pageSize": 10,
-  "totalCount": 0,
-  "totalPages": 0
+  "placeId": "<placeId válido>",
+  "sessionToken": "550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
-**Resultado actual:** _______________
+**Resultado esperado:**
+- HTTP 200 (el campo `address` no es validado actualmente)
+- `address` en la respuesta puede ser null o cadena vacía
 
 ---
 
-### TC-020 — History retorna registros ordenados de más reciente a más antiguo
-**Prioridad:** Alta | **Tipo:** Funcional | **Estado:** Pendiente
+### TC-GC-06 — Geocodificación persiste el placeId en request_payload
 
-**Pasos:**
-1. Crear al menos 3 geocodificaciones con intervalos de tiempo
-2. Llamar a `GET /api/maps/history`
+**Precondición:** Ejecutar TC-GC-01.
+
+**Verificación en BD:**
+```sql
+SELECT request_payload FROM geocode_queries ORDER BY queried_at DESC LIMIT 1;
+```
 
 **Resultado esperado:**
-- `data[0].queriedAt` > `data[1].queriedAt` > `data[2].queriedAt`
-- Orden DESC por `queriedAt` estrictamente
-
-**Resultado actual:** _______________
+- `request_payload` contiene `placeId` y `address` como JSON
 
 ---
 
-### TC-021 — History paginación: defaults page=1, pageSize=10
-**Prioridad:** Alta | **Tipo:** Funcional | **Estado:** Pendiente
+### TC-GC-07 — Geocodificación persiste el response completo de Google en response_payload
 
-**Precondición:** Al menos 1 registro en la tabla.
-
-**Request:**
-```http
-GET http://localhost:5000/api/maps/history
+**Verificación en BD:**
+```sql
+SELECT response_payload FROM geocode_queries ORDER BY queried_at DESC LIMIT 1;
 ```
 
 **Resultado esperado:**
-- `page` = 1
-- `pageSize` = 10
-- `data` tiene máximo 10 elementos
-
-**Resultado actual:** _______________
+- `response_payload` es un JSON válido con estructura de respuesta de Google Geocoding API
+- Contiene los campos `status`, `results`
 
 ---
 
-### TC-022 — History paginación: navegación entre páginas
-**Prioridad:** Alta | **Tipo:** Funcional | **Estado:** Pendiente
+### TC-GC-08 — Múltiples geocodificaciones de la misma dirección crean filas separadas
 
-**Precondición:** Al menos 12 registros en la tabla.
+**Acción:** Ejecutar TC-GC-01 dos veces con el mismo `placeId`.
 
-**Request A — Página 1:**
-```http
-GET http://localhost:5000/api/maps/history?page=1&pageSize=10
-```
-
-**Request B — Página 2:**
-```http
-GET http://localhost:5000/api/maps/history?page=2&pageSize=10
+**Verificación en BD:**
+```sql
+SELECT COUNT(*) FROM geocode_queries WHERE address = 'Av. Amazonas, Quito, Ecuador';
 ```
 
 **Resultado esperado:**
-- Respuesta A: `page`=1, `totalPages`≥2, `data` con 10 elementos
-- Respuesta B: `page`=2, `data` con los registros restantes
-- No hay `id` duplicado entre las dos páginas
-- `totalCount` es igual en ambas respuestas
-
-**Resultado actual:** _______________
+- COUNT aumenta en 1 por cada llamada (no hay deduplicación)
 
 ---
 
-### TC-023 — History paginación: pageSize personalizado
-**Prioridad:** Media | **Tipo:** Funcional | **Estado:** Pendiente
+### TC-GC-09 — El sessionToken cierra la sesión de facturación de Places API
 
-**Precondición:** Al menos 6 registros en la tabla.
+**Precondición:** Realizar llamadas a `/autocomplete` con un `sessionToken`. Usar ese mismo token en `/geocode`.
 
-**Request:**
-```http
-GET http://localhost:5000/api/maps/history?page=1&pageSize=3
-```
+**Acción:** Verificar en logs o Google Cloud Console que el `sessionToken` aparece en la llamada de geocode.
 
 **Resultado esperado:**
-- `pageSize` = 3
-- `data` tiene exactamente 3 elementos
+- El mismo UUID v4 enviado en autocomplete aparece en la request de geocode enviada al backend
+
+---
+
+## 3. GET /api/maps/history
+
+**URL:** `GET http://localhost:5000/api/maps/history`
+
+### TC-HI-01 — Historial sin filtros retorna página 1 con 10 registros por defecto
+
+**Precondición:** Existen al menos 10 filas en `geocode_queries`.
+
+**Request:** `GET /api/maps/history`
+
+**Resultado esperado:**
+- HTTP 200
+- Body:
+  ```json
+  {
+    "data": [...],
+    "page": 1,
+    "pageSize": 10,
+    "totalCount": <N>,
+    "totalPages": <ceil(N/10)>
+  }
+  ```
+- `data` tiene exactamente 10 elementos (o menos si hay menos de 10 registros)
+- Los registros están ordenados por `queriedAt` de más reciente a más antiguo
+- Cada elemento tiene: `id`, `address`, `latitude`, `longitude`, `queriedAt`
+
+---
+
+### TC-HI-02 — Paginación con `page=2` retorna los siguientes registros
+
+**Precondición:** Existen al menos 11 filas en `geocode_queries`.
+
+**Request:** `GET /api/maps/history?page=2&pageSize=10`
+
+**Resultado esperado:**
+- HTTP 200
+- `page`: 2
+- `data` contiene registros distintos a los de la página 1
+- `data` no se superpone con la respuesta de TC-HI-01
+
+---
+
+### TC-HI-03 — `pageSize` personalizado limita los resultados
+
+**Request:** `GET /api/maps/history?page=1&pageSize=3`
+
+**Resultado esperado:**
+- HTTP 200
+- `pageSize`: 3
+- `data` tiene máximo 3 elementos
 - `totalPages` = ceil(totalCount / 3)
 
-**Resultado actual:** _______________
-
 ---
 
-### TC-024 — History paginación: página más allá del total
-**Prioridad:** Media | **Tipo:** Borde | **Estado:** Pendiente
+### TC-HI-04 — Página fuera de rango retorna data vacía (no error)
 
-**Precondición:** 5 registros en la tabla (totalPages = 1 con pageSize=10).
+**Precondición:** Conocer el total de páginas de TC-HI-01.
 
-**Request:**
-```http
-GET http://localhost:5000/api/maps/history?page=99&pageSize=10
-```
+**Request:** `GET /api/maps/history?page=9999`
 
 **Resultado esperado:**
 - HTTP 200
 - `data`: `[]`
-- `page`: 99
-- `totalCount`: 5 (correcto)
-- `totalPages`: 1
-
-**Resultado actual:** _______________
+- `totalCount` refleja el total real de registros
 
 ---
 
-### TC-025 — History filtro por dateFrom
-**Prioridad:** Alta | **Tipo:** Funcional | **Estado:** Pendiente
+### TC-HI-05 — Filtro `dateFrom` excluye registros anteriores
 
-**Precondición:** Registros con fechas del día actual y del día anterior.
+**Precondición:** Existen registros con fechas distintas en BD.
 
-**Request:**
-```http
-GET http://localhost:5000/api/maps/history?dateFrom=2026-05-07
-```
+**Request:** `GET /api/maps/history?dateFrom=2026-05-22`
 
 **Resultado esperado:**
-- Todos los elementos de `data` tienen `queriedAt` >= `2026-05-07T00:00:00Z`
-- Registros anteriores a esa fecha no aparecen
-
-**Resultado actual:** _______________
+- HTTP 200
+- Todos los elementos en `data` tienen `queriedAt >= 2026-05-22T00:00:00Z`
+- `totalCount` refleja solo los registros dentro del rango
 
 ---
 
-### TC-026 — History filtro por dateTo (inclusive)
-**Prioridad:** Alta | **Tipo:** Funcional | **Estado:** Pendiente
+### TC-HI-06 — Filtro `dateTo` excluye registros posteriores
 
-**Precondición:** Registros con fechas del día actual y del día siguiente.
-
-**Request:**
-```http
-GET http://localhost:5000/api/maps/history?dateTo=2026-05-07
-```
+**Request:** `GET /api/maps/history?dateTo=2026-05-21`
 
 **Resultado esperado:**
-- Todos los elementos tienen `queriedAt` < `2026-05-08T00:00:00Z` (el día completo queda incluido)
-- Registros del día siguiente no aparecen
-
-**Resultado actual:** _______________
+- HTTP 200
+- Todos los elementos en `data` tienen `queriedAt < 2026-05-22T00:00:00Z`
 
 ---
 
-### TC-027 — History filtro por rango dateFrom + dateTo
-**Prioridad:** Alta | **Tipo:** Funcional | **Estado:** Pendiente
+### TC-HI-07 — Filtro combinado `dateFrom` y `dateTo` acota correctamente
 
-**Request:**
-```http
-GET http://localhost:5000/api/maps/history?dateFrom=2026-05-06&dateTo=2026-05-07
-```
+**Request:** `GET /api/maps/history?dateFrom=2026-05-20&dateTo=2026-05-22`
 
 **Resultado esperado:**
-- Solo aparecen registros con `queriedAt` entre `2026-05-06T00:00:00Z` y `2026-05-07T23:59:59Z`
-- `totalCount` refleja solo el subconjunto filtrado
-
-**Resultado actual:** _______________
+- HTTP 200
+- Todos los elementos en `data` tienen `queriedAt` dentro del rango [2026-05-20, 2026-05-22]
+- Registros fuera del rango no aparecen
 
 ---
 
-### TC-028 — History filtro con rango que no tiene resultados
-**Prioridad:** Media | **Tipo:** Borde | **Estado:** Pendiente
+### TC-HI-08 — Rango de fechas sin resultados retorna array vacío
 
-**Request:**
-```http
-GET http://localhost:5000/api/maps/history?dateFrom=2020-01-01&dateTo=2020-01-02
-```
+**Request:** `GET /api/maps/history?dateFrom=2000-01-01&dateTo=2000-01-02`
 
 **Resultado esperado:**
 - HTTP 200
 - `data`: `[]`
 - `totalCount`: 0
-
-**Resultado actual:** _______________
+- `totalPages`: 0
 
 ---
 
-### TC-029 — History sin filtro retorna todos los registros
-**Prioridad:** Media | **Tipo:** Funcional | **Estado:** Pendiente
+### TC-HI-09 — BD vacía retorna estructura válida con datos vacíos
+
+**Precondición:** Tabla `geocode_queries` sin registros (limpiar con `TRUNCATE geocode_queries`).
+
+**Request:** `GET /api/maps/history`
+
+**Resultado esperado:**
+- HTTP 200
+- `data`: `[]`
+- `totalCount`: 0
+- `totalPages`: 0
+
+---
+
+### TC-HI-10 — Ordenamiento es siempre descendente por fecha
+
+**Precondición:** Existen al menos 2 registros con distintos `queriedAt`.
+
+**Request:** `GET /api/maps/history?pageSize=50`
+
+**Resultado esperado:**
+- HTTP 200
+- Para cada par de elementos consecutivos `data[i]` y `data[i+1]`: `data[i].queriedAt >= data[i+1].queriedAt`
+
+---
+
+### TC-HI-11 — pageSize=0 — comportamiento ante valores límite
+
+**Request:** `GET /api/maps/history?pageSize=0`
+
+**Resultado esperado (comportamiento actual):**
+- HTTP 500 o división por cero en cálculo de `totalPages`
+
+> **Nota:** La revisión de calidad identifica que `pageSize` debería validarse (mínimo 1). Este caso documenta el comportamiento actual para verificar la corrección futura.
+
+---
+
+### TC-HI-12 — page=0 — comportamiento ante valores límite
+
+**Request:** `GET /api/maps/history?page=0`
+
+**Resultado esperado (comportamiento actual):**
+- HTTP 500 o error de BD por `.Skip(-pageSize)`
+
+> **Nota:** La revisión de calidad identifica que `page` debería validarse (mínimo 1). Este caso documenta el comportamiento actual.
+
+---
+
+## 4. Flujo completo de integración
+
+### TC-INT-01 — Flujo end-to-end: autocomplete → geocode → historial
 
 **Pasos:**
-1. Contar registros en la DB: `SELECT COUNT(*) FROM geocode_queries`
-2. Llamar a `GET /api/maps/history?pageSize=1000`
+
+1. `POST /api/maps/autocomplete` con `input: "Plaza de la Independencia, Quito"` y un UUID v4 como sessionToken
+2. Tomar el primer `placeId` de la respuesta
+3. `POST /api/maps/geocode` con ese `placeId`, la `description` como `address`, y el mismo `sessionToken`
+4. `GET /api/maps/history?page=1&pageSize=1`
 
 **Resultado esperado:**
-- `totalCount` coincide con el COUNT de la DB
-- Sin filtros aplicados
-
-**Resultado actual:** _______________
-
----
-
-### TC-030 — History: estructura completa del response
-**Prioridad:** Alta | **Tipo:** Funcional | **Estado:** Pendiente
-
-**Precondición:** Al menos 1 registro en la tabla.
-
-**Request:**
-```http
-GET http://localhost:5000/api/maps/history?page=1&pageSize=5
-```
-
-**Resultado esperado:** Body con exactamente esta estructura:
-```json
-{
-  "data": [
-    {
-      "id": "<UUID>",
-      "address": "<string>",
-      "latitude": <decimal>,
-      "longitude": <decimal>,
-      "queriedAt": "<ISO 8601 con timezone>"
-    }
-  ],
-  "page": 1,
-  "pageSize": 5,
-  "totalCount": <int>,
-  "totalPages": <int>
-}
-```
-
-**Verificar:** ningún campo extra (no se expone `requestPayload`, `responsePayload` ni datos internos).
-
-**Resultado actual:** _______________
+- Paso 1: HTTP 200 con al menos una sugerencia
+- Paso 3: HTTP 200 con coordenadas válidas. El `id` retornado es un UUID.
+- Paso 4: El primer elemento de `data` es el registro del paso 3 (mismo `id`, `address`, `latitude`, `longitude`)
 
 ---
 
-## Suite 4 — CORS y Seguridad
+### TC-INT-02 — La API key de Google no aparece en respuestas del backend
 
-### TC-031 — CORS permite requests desde el frontend
-**Prioridad:** Alta | **Tipo:** Seguridad | **Estado:** Pendiente
-
-**Request:**
-```http
-OPTIONS http://localhost:5000/api/maps/autocomplete
-Origin: http://localhost:5173
-Access-Control-Request-Method: POST
-Access-Control-Request-Headers: Content-Type
-```
+**Acción:** Capturar con Wireshark o proxy HTTP (ej. Fiddler) las respuestas de los tres endpoints.
 
 **Resultado esperado:**
-- HTTP 204
-- Header `Access-Control-Allow-Origin: http://localhost:5173`
-- Header `Access-Control-Allow-Methods` incluye `POST`
-- Header `Access-Control-Allow-Headers` incluye `Content-Type`
-
-**Resultado actual:** ✅ Validado en integración
+- Ninguna respuesta del backend incluye el valor de `GOOGLE_MAPS_API_KEY` en el body, headers o logs accesibles al cliente
 
 ---
 
-### TC-032 — CORS bloquea requests desde origen no permitido
-**Prioridad:** Alta | **Tipo:** Seguridad | **Estado:** Pendiente
+### TC-INT-03 — CORS permite requests desde el frontend
 
-**Request:**
-```http
-OPTIONS http://localhost:5000/api/maps/autocomplete
-Origin: http://evil-site.example.com
-Access-Control-Request-Method: POST
-```
+**Acción:** Realizar un request fetch desde `http://localhost:5173` a `http://localhost:5000/api/maps/history`.
 
 **Resultado esperado:**
-- Response NO incluye `Access-Control-Allow-Origin: http://evil-site.example.com`
-
-**Resultado actual:** _______________
+- No hay error de CORS en la consola del browser
+- La respuesta llega correctamente al frontend
 
 ---
 
-### TC-033 ⚠️ — API key no aparece en logs del servidor
-**Prioridad:** Alta | **Tipo:** Seguridad | **Estado:** Pendiente
+### TC-INT-04 — CORS bloquea requests desde orígenes no autorizados
 
-> ⚠️ Issue crítico conocido: la API key aparece en la URL de Geocoding API (`?key=...`) que se loguea en cualquier middleware (ver `code-quality-review.md` issue #1).
+**Acción:** Realizar un request fetch desde un origen distinto (ej. `http://localhost:4000`).
+
+**Resultado esperado:**
+- Error de CORS en el browser
+- El backend retorna el header `Access-Control-Allow-Origin` solo para `http://localhost:5173`
+
+---
+
+### TC-INT-05 — El historial se actualiza tras cada geocodificación exitosa
+
+**Precondición:** Contar las filas actuales en `geocode_queries`.
+
+**Acción:** Ejecutar TC-INT-01 completo.
+
+**Resultado esperado:**
+- La tabla `geocode_queries` tiene una fila más
+- La nueva fila tiene todos los campos correctamente populados: `id`, `address`, `latitude`, `longitude`, `queried_at`, `request_payload`, `response_payload`
+
+---
+
+## 5. Frontend — SearchBox
+
+### TC-FE-AC-01 — Autocompletado se dispara después de 300ms de inactividad
+
+**Precondición:** Frontend corriendo en `http://localhost:5173`.
 
 **Pasos:**
-1. Llamar a `POST /api/maps/geocode`
-2. Revisar los logs del backend
-
-**Resultado esperado (post-fix):**
-- La API key no aparece en ninguna línea de log
-- Las URLs logueadas muestran la clave como `***` o están ausentes
-
-**Resultado actual:** _______________
-
----
-
-### TC-034 — API key no aparece en el bundle del frontend
-**Prioridad:** Alta | **Tipo:** Seguridad | **Estado:** Pendiente
-
-**Pasos:**
-1. Ejecutar `npm run build` en el frontend
-2. Buscar la API key en los archivos generados:
-   ```bash
-   grep -r "AIza" frontend/maps-demo-ui/dist/
-   ```
+1. Hacer clic en el campo de búsqueda
+2. Escribir "Av. Amazonas" rápidamente
+3. Esperar 300ms sin escribir
 
 **Resultado esperado:**
-- Sin coincidencias: la API key no está en el bundle
-
-**Resultado actual:** _______________
+- Durante la escritura, no se realizan llamadas a `/api/maps/autocomplete`
+- Después de 300ms, se realiza una sola llamada con el texto completo
+- Aparece el dropdown de sugerencias
 
 ---
 
-### TC-035 — Response no expone datos internos sensibles
-**Prioridad:** Alta | **Tipo:** Seguridad | **Estado:** Pendiente
+### TC-FE-AC-02 — Dropdown aparece con sugerencias al escribir
 
 **Pasos:**
-1. Llamar a `GET /api/maps/history`
-2. Inspeccionar el body del response
+1. Escribir "Quito" en el campo de búsqueda
+2. Esperar el debounce
 
 **Resultado esperado:**
-- Los campos `requestPayload` y `responsePayload` (que contienen el response completo de Google, incluyendo metadatos internos) **no aparecen** en el response de history
-- Solo se exponen: `id`, `address`, `latitude`, `longitude`, `queriedAt`
-
-**Resultado actual:** ✅ Confirmado: `PagedResult<GeocodeResult>` no incluye payloads
+- Aparece un dropdown con al menos una sugerencia
+- Cada sugerencia muestra la dirección completa
+- El spinner de carga aparece mientras se espera la respuesta
 
 ---
 
-## Suite 5 — Flujo de usuario completo (Frontend + Backend)
-
-### TC-036 — Flujo completo: buscar → seleccionar → ver en mapa → ver en historial
-**Prioridad:** Alta | **Tipo:** Funcional | **Estado:** Pendiente
+### TC-FE-AC-03 — Seleccionar sugerencia dispara geocodificación y limpia el campo
 
 **Pasos:**
-1. Abrir `http://localhost:5173`
-2. Escribir "Parque La Carolina" en el campo de búsqueda
-3. Esperar al menos 300ms (debounce)
-4. Verificar que aparece el dropdown con sugerencias
-5. Hacer clic en una sugerencia
-6. Verificar que el input se limpia
-7. Verificar que el mapa se actualiza mostrando la nueva ubicación
-8. Verificar que la tabla de historial muestra la nueva consulta en la primera fila
+1. Ejecutar TC-FE-AC-02
+2. Hacer clic en la primera sugerencia
 
 **Resultado esperado:**
-- El dropdown desaparece al seleccionar
-- El mapa muestra la coordenada de la dirección seleccionada
-- El historial se actualiza automáticamente sin recargar la página
-- La fila en historial muestra dirección, latitud, longitud y fecha correctas
-
-**Resultado actual:** _______________
+- El campo de búsqueda se limpia
+- El dropdown desaparece
+- Se realiza una llamada a `POST /api/maps/geocode`
+- Las coordenadas aparecen debajo del campo de búsqueda
 
 ---
 
-### TC-037 — Debounce: no se llama a autocomplete antes de 300ms
-**Prioridad:** Media | **Tipo:** Funcional | **Estado:** Pendiente
-
-**Pasos:**
-1. Abrir las DevTools del navegador (pestaña Network)
-2. Escribir "Q" en el campo de búsqueda
-3. Inmediatamente escribir "u", "i", "t", "o" sin pausas
-4. Observar las requests en Network
-
-**Resultado esperado:**
-- Solo se dispara 1 request a `/api/maps/autocomplete` (no una por cada keystroke)
-- El request se dispara aprox. 300ms después de dejar de escribir
-
-**Resultado actual:** _______________
-
----
-
-### TC-038 — sessionToken se regenera después de cada geocodificación
-**Prioridad:** Media | **Tipo:** Funcional | **Estado:** Pendiente
+### TC-FE-AC-04 — El sessionToken es consistente entre autocomplete y geocode
 
 **Pasos:**
 1. Abrir DevTools → Network
-2. Realizar una búsqueda y seleccionar una sugerencia (sesión 1)
-3. Anotar el `sessionToken` enviado en el request de geocode
-4. Realizar otra búsqueda y seleccionar otra sugerencia (sesión 2)
-5. Anotar el `sessionToken` de la segunda llamada a autocomplete
+2. Escribir en el campo de búsqueda y esperar sugerencias
+3. Seleccionar una sugerencia
 
 **Resultado esperado:**
-- El `sessionToken` de la sesión 1 ≠ `sessionToken` de la sesión 2
-- Los tokens son UUIDs v4 (formato: `xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx`)
-- El mismo token se usa en todos los requests de autocomplete de la misma sesión y en el geocode final
-
-**Resultado actual:** _______________
+- El `sessionToken` en las llamadas a `/autocomplete` es un UUID v4 válido
+- El mismo `sessionToken` aparece en la llamada a `/geocode`
+- Después de geocodificar, la siguiente búsqueda usa un UUID diferente
 
 ---
 
-### TC-039 — Estado de carga visible durante geocodificación
-**Prioridad:** Media | **Tipo:** UI | **Estado:** Pendiente
+### TC-FE-AC-05 — El campo queda deshabilitado durante geocodificación
 
 **Pasos:**
-1. Seleccionar una sugerencia del dropdown
-2. Observar el estado del input inmediatamente después
+1. Seleccionar una sugerencia
+2. Observar el campo inmediatamente
 
 **Resultado esperado:**
-- El input muestra estado deshabilitado o spinner durante la geocodificación
-- No se puede hacer otra búsqueda mientras se procesa la actual
-
-**Resultado actual:** _______________
+- El campo está deshabilitado (`disabled`) mientras se procesa el geocode
+- Aparece el spinner de carga
+- Al completarse, el campo vuelve a estar habilitado
 
 ---
 
-### TC-040 — Error de geocode visible para el usuario
-**Prioridad:** Media | **Tipo:** UI | **Estado:** Pendiente
+### TC-FE-AC-06 — Error de geocodificación muestra mensaje al usuario
 
-**Pasos:**
-1. Simular un error del backend (detener el backend temporalmente)
-2. Seleccionar una sugerencia del dropdown
+**Precondición:** Simular error en el backend (detener el backend o usar un placeId inválido mediante herramienta de mocking).
 
 **Resultado esperado:**
-- Se muestra un mensaje de error en la UI (no una pantalla en blanco)
-- El usuario puede intentar otra búsqueda
-
-**Resultado actual:** _______________
+- Aparece el mensaje "Error al obtener coordenadas. Intente de nuevo."
+- El campo vuelve a estar habilitado
+- El dropdown desaparece
 
 ---
 
-### TC-041 — Mapa estado inicial centrado en Quito
-**Prioridad:** Baja | **Tipo:** UI | **Estado:** Pendiente
+### TC-FE-AC-07 — La API key de Google no aparece en el bundle ni en requests del browser
 
 **Pasos:**
-1. Abrir `http://localhost:5173` sin haber hecho ninguna búsqueda
+1. Abrir DevTools → Network
+2. Ejecutar una búsqueda y geocodificación completa
+3. Revisar todas las requests: payload, headers, response
 
 **Resultado esperado:**
-- El mapa muestra la zona de Quito, Ecuador como ubicación predeterminada (lat≈-0.18, lng≈-78.47)
-- No hay error en el iframe
-
-**Resultado actual:** _______________
+- El valor de `GOOGLE_MAPS_API_KEY` no aparece en ningún request ni response visible en el browser
+- El frontend solo llama a `localhost:5000`, nunca directamente a `googleapis.com` (excepto el iframe del mapa)
 
 ---
 
-### TC-042 — Filtro de fecha actualiza el historial
-**Prioridad:** Alta | **Tipo:** Funcional | **Estado:** Pendiente
+## 6. Frontend — MapPortlet
 
-**Precondición:** Al menos 2 geocodificaciones en fechas distintas.
+### TC-FE-MAP-01 — Mapa muestra ubicación por defecto al cargar
 
-**Pasos:**
-1. Abrir la sección de filtro por fecha
-2. Seleccionar "Desde" = hoy y "Hasta" = hoy
-3. Verificar que el historial se actualiza
+**Precondición:** Abrir la aplicación sin haber geocodificado nada.
 
 **Resultado esperado:**
-- Solo aparecen registros del día actual
-- `totalCount` refleja el subconjunto filtrado
-- La paginación se resetea a página 1
-
-**Resultado actual:** _______________
+- El iframe del mapa está visible
+- El mapa está centrado en Quito, Ecuador (lat: -0.1806532, lng: -78.4678382)
 
 ---
 
-### TC-043 — Botón "Limpiar" del filtro restaura el historial completo
-**Prioridad:** Media | **Tipo:** Funcional | **Estado:** Pendiente
+### TC-FE-MAP-02 — Mapa se actualiza con el pin del resultado geocodificado
 
 **Pasos:**
-1. Aplicar un filtro de fechas
-2. Hacer clic en "Limpiar"
+1. Ejecutar TC-FE-AC-03
+2. Observar el mapa
 
 **Resultado esperado:**
-- Los inputs de fecha quedan vacíos
-- El historial muestra todos los registros nuevamente
-- `totalCount` vuelve al total global
-
-**Resultado actual:** _______________
+- El iframe se recarga con las nuevas coordenadas
+- El mapa muestra un pin en la ubicación geocodificada
 
 ---
 
-### TC-044 — Paginación en el historial
-**Prioridad:** Alta | **Tipo:** Funcional | **Estado:** Pendiente
-
-**Precondición:** Más de 10 registros en la base de datos.
+### TC-FE-MAP-03 — Mapa refleja siempre el resultado más reciente
 
 **Pasos:**
-1. Verificar que el botón "Anterior" está deshabilitado en página 1
-2. Hacer clic en "Siguiente"
-3. Verificar que el indicador dice "Página 2 de X"
-4. Hacer clic en "Anterior"
-5. Verificar que vuelve a "Página 1 de X"
+1. Geocodificar "Quito, Ecuador"
+2. Geocodificar "Buenos Aires, Argentina"
 
 **Resultado esperado:**
-- "Anterior" deshabilitado en página 1
-- "Siguiente" deshabilitado en la última página
-- Los datos de la tabla cambian al navegar entre páginas
-- No hay duplicados entre páginas
-
-**Resultado actual:** _______________
+- Tras la primera geocodificación, el mapa muestra Quito
+- Tras la segunda, el mapa muestra Buenos Aires
 
 ---
 
-### TC-045 — Nueva geocodificación resetea la paginación a página 1
-**Prioridad:** Media | **Tipo:** Funcional | **Estado:** Pendiente
+## 7. Frontend — HistoryTable y DateFilter
 
-**Pasos:**
-1. Navegar a la página 2 del historial
-2. Realizar una nueva búsqueda y geocodificación
+### TC-FE-HI-01 — Tabla muestra el historial ordenado de más reciente a más antiguo
+
+**Precondición:** Existen registros en la BD.
 
 **Resultado esperado:**
-- El historial vuelve automáticamente a la página 1
+- La primera fila corresponde al registro más reciente
+- Las fechas en la columna "Fecha y hora" están en orden descendente
+
+---
+
+### TC-FE-HI-02 — Historial se actualiza automáticamente tras geocodificar
+
+**Pasos:**
+1. Observar el conteo actual en el historial
+2. Geocodificar una dirección nueva
+
+**Resultado esperado:**
+- El historial se recarga automáticamente (sin recargar la página)
 - El nuevo registro aparece como primera fila
-
-**Resultado actual:** _______________
-
----
-
-## Suite 6 — Base de Datos
-
-### TC-046 — Estructura de tabla coincide con el spec
-**Prioridad:** Alta | **Tipo:** Funcional | **Estado:** Pendiente
-
-**Query de verificación:**
-```sql
-SELECT column_name, data_type, character_maximum_length, is_nullable
-FROM information_schema.columns
-WHERE table_name = 'geocode_queries'
-ORDER BY ordinal_position;
-```
-
-**Resultado esperado:**
-
-| column_name | data_type | max_length | nullable |
-|-------------|-----------|------------|----------|
-| id | uuid | — | NO |
-| address | character varying | 500 | NO |
-| request_payload | jsonb | — | NO |
-| response_payload | jsonb | — | NO |
-| latitude | numeric | — | NO |
-| longitude | numeric | — | NO |
-| queried_at | timestamp with time zone | — | NO |
-
-**Resultado actual:** _______________
+- El conteo total aumenta en 1
 
 ---
 
-### TC-047 — Precisión de lat/lng almacenada correctamente
-**Prioridad:** Media | **Tipo:** Funcional | **Estado:** Pendiente
+### TC-FE-HI-03 — Paginación navega entre páginas correctamente
+
+**Precondición:** Existen más de 10 registros en la BD.
 
 **Pasos:**
-1. Geocodificar una dirección y anotar `latitude` y `longitude` del response
-2. Consultar en la DB:
-   ```sql
-   SELECT latitude, longitude FROM geocode_queries ORDER BY queried_at DESC LIMIT 1;
-   ```
+1. Verificar que hay más de una página (indicador "Página 1 de N")
+2. Hacer clic en "Siguiente"
 
 **Resultado esperado:**
-- `latitude`: hasta 8 decimales (DECIMAL(10,8))
-- `longitude`: hasta 8 decimales (DECIMAL(11,8))
-- Los valores coinciden con los del response del endpoint
-
-**Resultado actual:** _______________
+- El indicador cambia a "Página 2 de N"
+- Los registros de la tabla son distintos a los de la página 1
+- El botón "Anterior" se habilita
+- El botón "Siguiente" se deshabilita en la última página
 
 ---
 
-### TC-048 ⚠️ — Consultas de historial usan índice en queried_at
-**Prioridad:** Media | **Tipo:** Funcional | **Estado:** Pendiente
+### TC-FE-HI-04 — Botón "Anterior" deshabilitado en la primera página
 
-> ⚠️ Issue conocido: no hay índice definido en `queried_at` (ver `code-quality-review.md` issue #10). Con volumen alto de datos, la consulta hará seq scan.
+**Resultado esperado:**
+- En la página 1, el botón "Anterior" está deshabilitado visualmente (opacidad reducida) y no es clickeable
 
-**Query de verificación:**
-```sql
-EXPLAIN ANALYZE
-SELECT * FROM geocode_queries
-WHERE queried_at >= '2026-05-01'
-ORDER BY queried_at DESC
-LIMIT 10;
+---
+
+### TC-FE-HI-05 — Filtro por fecha limita los resultados mostrados
+
+**Pasos:**
+1. Ingresar fecha "Desde": la fecha de hoy
+2. Ingresar fecha "Hasta": la fecha de hoy
+
+**Resultado esperado:**
+- La tabla muestra solo los registros con `queriedAt` de hoy
+- El total de registros cambia
+- La paginación se resetea a la página 1
+
+---
+
+### TC-FE-HI-06 — Botón "Limpiar" restaura el historial completo
+
+**Precondición:** Filtro de fecha aplicado (TC-FE-HI-05).
+
+**Pasos:**
+1. Hacer clic en "Limpiar"
+
+**Resultado esperado:**
+- Los inputs de fecha se limpian
+- El historial muestra todos los registros sin filtro
+- El total de registros vuelve al valor original
+
+---
+
+### TC-FE-HI-07 — Fecha "Hasta" no puede ser anterior a fecha "Desde"
+
+**Pasos:**
+1. Ingresar "Desde": 2026-05-22
+2. Intentar ingresar "Hasta": 2026-05-20
+
+**Resultado esperado:**
+- El selector de fecha "Hasta" tiene `min` igual a la fecha "Desde"
+- No permite seleccionar una fecha anterior
+
+---
+
+### TC-FE-HI-08 — Estado de carga muestra skeleton mientras se obtienen datos
+
+**Pasos:**
+1. Throttlear la red a "Slow 3G" en DevTools
+2. Recargar la página o limpiar filtros
+
+**Resultado esperado:**
+- Durante la carga, aparecen 5 barras skeleton animadas en lugar de la tabla
+- Una vez cargados los datos, la tabla aparece correctamente
+
+---
+
+### TC-FE-HI-09 — Tabla vacía muestra mensaje informativo
+
+**Precondición:** No existen registros (o filtro de fecha que no coincide con ningún registro).
+
+**Resultado esperado:**
+- Se muestra el texto "No hay consultas registradas."
+- No aparece una tabla vacía con encabezados sin filas
+
+---
+
+### TC-FE-HI-10 — Filtro por fecha resetea la paginación a página 1
+
+**Precondición:** El usuario está en la página 2 del historial.
+
+**Pasos:**
+1. Aplicar cualquier filtro de fecha
+
+**Resultado esperado:**
+- La paginación vuelve a la página 1 automáticamente
+
+---
+
+## Resumen de cobertura
+
+| Módulo                   | Total casos | Happy path | Validaciones | Edge cases |
+|--------------------------|-------------|------------|--------------|------------|
+| POST /autocomplete       | 10          | 3          | 4            | 3          |
+| POST /geocode            | 9           | 5          | 2            | 2          |
+| GET /history             | 12          | 5          | 3            | 4          |
+| Integración              | 5           | 3          | 2            | 0          |
+| Frontend — SearchBox     | 7           | 4          | 2            | 1          |
+| Frontend — MapPortlet    | 3           | 3          | 0            | 0          |
+| Frontend — History/Date  | 10          | 5          | 3            | 2          |
+| **Total**                | **56**      | **28**     | **16**       | **12**     |
+
+---
+
+## Datos de prueba sugeridos
+
+### Direcciones con PlaceId conocido
+| Dirección | PlaceId (referencia) |
+|-----------|---------------------|
+| Av. Amazonas, Quito, Ecuador | `EhxBdi4gQW1hem9uYXMsIFF1aXRvLCBFY3VhZG9yIi4q...` |
+| Plaza de la Independencia, Quito | Obtener via `/autocomplete` |
+| Buenos Aires, Argentina | Obtener via `/autocomplete` |
+
+> Los `placeId` de Google Maps pueden cambiar. Obtenerlos siempre con una llamada fresca a `/autocomplete` antes de usar en `/geocode`.
+
+### SessionTokens de prueba (UUID v4)
+```
+550e8400-e29b-41d4-a716-446655440000
+6ba7b810-9dad-41d4-80b4-00c04fd430c8
+6ba7b812-9dad-41d4-80b4-00c04fd430c8
 ```
 
-**Resultado esperado (post-fix):**
-- El plan incluye `Index Scan` en lugar de `Seq Scan`
+### Comando SQL para limpiar datos de prueba
+```sql
+-- Ver registros de hoy
+SELECT * FROM geocode_queries WHERE queried_at::date = CURRENT_DATE ORDER BY queried_at DESC;
 
-**Resultado actual:** _______________
+-- Eliminar registros de prueba por dirección
+DELETE FROM geocode_queries WHERE address ILIKE '%test%';
 
----
-
-## Resumen de casos
-
-| Suite | Casos | Alta | Media | Baja |
-|-------|-------|------|-------|------|
-| 1 — Autocomplete | TC-001 a TC-009 | 4 | 4 | 1 |
-| 2 — Geocode | TC-010 a TC-018 | 5 | 3 | 0 |
-| 3 — History | TC-019 a TC-030 | 6 | 4 | 0 |
-| 4 — CORS y Seguridad | TC-031 a TC-035 | 5 | 0 | 0 |
-| 5 — Flujo completo | TC-036 a TC-045 | 4 | 5 | 1 |
-| 6 — Base de Datos | TC-046 a TC-048 | 1 | 2 | 0 |
-| **Total** | **48** | **25** | **18** | **2** |
-
-### Casos marcados como ⚠️ (bloqueados por issues conocidos)
-
-| ID | Issue relacionado | Criticidad |
-|----|-------------------|------------|
-| TC-005 | Sin validación de longitud mínima en autocomplete | 🔴 Crítico |
-| TC-015 | Acceso a `results[0]` sin guard | 🔴 Crítico |
-| TC-016 | Sin validación de longitud de `Address` | 🔴 Crítico |
-| TC-033 | API key en query string de Geocoding URL | 🔴 Crítico |
-| TC-048 | Sin índice en `queried_at` | 🟡 Advertencia |
-
-Estos 5 casos se recomienda ejecutar **después** de que los issues críticos del `code-quality-review.md` sean corregidos.
+-- Ver total de registros
+SELECT COUNT(*) FROM geocode_queries;
+```

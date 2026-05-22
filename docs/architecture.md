@@ -1,7 +1,7 @@
 # Arquitectura del Proyecto — Maps Demo
 
-**Versión:** 1.0
-**Fecha:** 2026-05-07
+**Versión:** 1.1
+**Fecha:** 2026-05-22
 **Branch:** feature/maps-autocomplete-geocode-history
 
 ---
@@ -18,6 +18,7 @@
 8. [Variables de entorno](#8-variables-de-entorno)
 9. [Decisiones técnicas](#9-decisiones-técnicas)
 10. [Restricciones y limitaciones conocidas](#10-restricciones-y-limitaciones-conocidas)
+11. [Documentación relacionada](#11-documentación-relacionada)
 
 ---
 
@@ -626,3 +627,16 @@ Todas las variables sensibles viven en `.env` en la raíz del proyecto. El archi
 | 8 | `lang="en"` en `index.html` con contenido en español | 🔴 Alta | `accessibility-review.md` index.html |
 | 9 | `MapPortlet` usa iframe embed sin API key (legacy URL) — puede dejar de funcionar | 🟡 Media | — |
 | 10 | Sin CancellationToken en los handlers — requests cancelados siguen ejecutándose | 🟡 Media | `code-quality-review.md` #8 |
+| 11 | `pageSize` sin límite superior — permite cargar la tabla completa en una sola request | 🟡 Media | `code-quality-review.md` #7 |
+| 12 | `page=0` o negativo genera error de BD en `.Skip(-pageSize)` | 🟡 Media | `code-quality-review.md` #6 |
+
+---
+
+## 11. Documentación relacionada
+
+| Documento | Ruta | Descripción |
+|-----------|------|-------------|
+| Spec del feature | `docs/specs/MAPS_AUTOCOMPLETE_GEOCODE_HISTORY.md` | Requerimientos, DTOs, plan de implementación y criterios de aceptación |
+| Casos de prueba QA | `docs/qa/test-cases.md` | 56 casos de prueba para los tres endpoints y el frontend |
+| Revisión de accesibilidad | `docs/reviews/accessibility-review.md` | 18 issues WCAG en componentes React |
+| Revisión de calidad de código | `docs/reviews/code-quality-review.md` | 17 issues en el backend .NET |
