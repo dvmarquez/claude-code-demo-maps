@@ -1,141 +1,157 @@
 # Accessibility Review — Maps Demo UI
 
-**Fecha:** 2026-05-07
-**Branch:** feature/maps-autocomplete-geocode-history
-**Archivos revisados:**
-- `src/main.jsx`
-- `src/App.jsx`
-- `src/pages/HomePage.jsx`
-- `src/components/SearchBox.jsx`
-- `src/components/MapPortlet.jsx`
-- `src/components/DateFilter.jsx`
-- `src/components/HistoryTable.jsx`
+Fecha: 2026-05-22
+Branch: feature/maps-autocomplete-geocode-history
 
 ---
 
 ## Resumen
 
-| Categoría | Cantidad |
-|-----------|----------|
-| 🔴 Críticos | 6 |
-| 🟡 Advertencias | 6 |
-| 🟢 Sugerencias | 5 |
-| **Total** | **17** |
+- Total issues: 18
+- Críticos: 7
+- Advertencias: 7
+- Sugerencias: 4
 
 ---
 
-## Issues encontrados
+## Issues por componente
 
-### SearchBox
+### SearchBox.jsx
 
-#### 🔴 Crítico — Input sin label visible ni aria-label
-**Archivo:** `src/components/SearchBox.jsx:42`
-**Problema:** El `<input type="text">` solo tiene `placeholder="Buscar dirección..."`. No existe un `<label>` asociado via `htmlFor`/`id` ni un atributo `aria-label`. El placeholder desaparece al escribir y no es equivalente a un label para lectores de pantalla.
-**Recomendación:** Agregar `id="search-address"` al input y un `<label htmlFor="search-address">` visible (o `sr-only`), o al menos `aria-label="Buscar dirección"` en el input.
+**[CRÍTICO] Input de búsqueda sin label accesible**
+- Línea: 42–53
+- Problema: El `<input>` usa `placeholder` como única indicación de propósito. No hay `<label>` asociado via `htmlFor`/`id`, ni `aria-label`. Los lectores de pantalla no anuncian el propósito del campo al recibir foco; el placeholder desaparece al escribir.
+- Recomendación: Agregar `<label htmlFor="address-search" className="sr-only">Buscar dirección</label>` e `id="address-search"` al input. Alternativamente, `aria-label="Buscar dirección"` directamente en el input.
 
-#### 🔴 Crítico — Dropdown sin aria-live, role="listbox" ni role="option"
-**Archivo:** `src/components/SearchBox.jsx:67-80`
-**Problema:** El `<ul>` con sugerencias aparece y desaparece dinámicamente pero no tiene `aria-live` ni `role="listbox"`. Los usuarios de lectores de pantalla no son notificados cuando aparecen sugerencias ni cuántas hay disponibles. Los `<li>` tampoco tienen `role="option"`.
-**Recomendación:** Agregar `role="listbox"` al `<ul>` y `role="option"` a cada `<li>`. Agregar un elemento con `aria-live="polite"` que anuncie la cantidad de sugerencias disponibles.
+**[CRÍTICO] Dropdown de sugerencias sin gestión de teclado**
+- Líneas: 67–80
+- Problema: El `<ul>` de sugerencias solo responde a eventos de ratón (`onMouseDown`). No hay soporte para navegación con flechas, selección con Enter ni cierre con Escape. Usuarios de teclado no pueden seleccionar ninguna sugerencia, bloqueando la funcionalidad principal.
+- Recomendación: Implementar `onKeyDown` en el input que maneje `ArrowDown`/`ArrowUp`, `Enter` y `Escape`. Usar índice de item activo en estado local con `aria-activedescendant`.
 
-#### 🔴 Crítico — Dropdown no navegable con teclado
-**Archivo:** `src/components/SearchBox.jsx:67-80`
-**Problema:** Las sugerencias solo son seleccionables via `onMouseDown`. No hay manejo de eventos de teclado (`ArrowDown`, `ArrowUp`, `Escape`, `Enter`). Los usuarios que navegan exclusivamente con teclado no pueden seleccionar una sugerencia.
-**Recomendación:** Agregar `onKeyDown` al input que gestione `ArrowDown`/`ArrowUp` para mover foco entre sugerencias, `Escape` para cerrar, y `Enter` para confirmar. Cada `<li>` debe tener `tabIndex={-1}` y `onKeyDown` propio. Combinar con `aria-activedescendant`.
+**[CRÍTICO] Dropdown sin `aria-live` — usuarios de screen reader no son notificados**
+- Líneas: 67–80
+- Problema: Cuando el dropdown aparece, no hay región `aria-live` que notifique al usuario cuántas sugerencias hay disponibles.
+- Recomendación: Agregar elemento oculto con `aria-live="polite"` que anuncie el número de sugerencias (ej: "3 sugerencias disponibles. Use las flechas para navegar.").
 
-#### 🔴 Crítico — Spinner de carga sin anuncio a lector de pantalla
-**Archivo:** `src/components/SearchBox.jsx:54-58`
-**Problema:** El spinner es puramente visual sin texto alternativo ni `aria-label`. Los usuarios de lectores de pantalla no saben que hay una operación en curso. Tampoco hay `aria-busy` en el input durante `isGeocoding`.
-**Recomendación:** Agregar `aria-busy={isLoadingAutocomplete || isGeocoding}` al input, un `<span className="sr-only">` con texto "Buscando..." o "Obteniendo coordenadas...", y `aria-hidden="true"` al div del spinner.
+**[CRÍTICO] `<li>` de sugerencias sin rol ni accesibilidad por teclado**
+- Líneas: 69–78
+- Problema: Cada item es un `<li>` sin `role="option"`, sin `tabIndex`, sin `aria-selected`. El patrón combobox/listbox requiere `role="listbox"` en el `<ul>` y `role="option"` en cada `<li>`.
+- Recomendación: Agregar `role="listbox"` al `<ul>` y `role="option"` a cada `<li>`. Conectar con el input usando `aria-controls` y `aria-activedescendant`.
 
-#### 🟡 Advertencia — aria-expanded ausente en el combobox
-**Archivo:** `src/components/SearchBox.jsx:42`
-**Problema:** El input actúa como combobox pero no tiene `aria-expanded` para indicar el estado del dropdown ni `aria-haspopup="listbox"`.
-**Recomendación:** Agregar `role="combobox"`, `aria-expanded={showDropdown && suggestions.length > 0}`, `aria-haspopup="listbox"`, y `aria-autocomplete="list"` al input.
+**[ADVERTENCIA] Spinner de carga sin texto alternativo**
+- Líneas: 54–58
+- Problema: El spinner es un `<div>` con animación CSS sin `aria-label` ni región `aria-live`. Un usuario de screen reader no sabe que el sistema está trabajando.
+- Recomendación: Agregar `role="status"` y `aria-label="Buscando..."` al contenedor, o `<span className="sr-only">Buscando...</span>` dentro del div.
 
-#### 🟡 Advertencia — Mensaje de error no vinculado al input via aria-describedby
-**Archivo:** `src/components/SearchBox.jsx:61-65`
-**Problema:** El párrafo de error no está asociado al input mediante `aria-describedby`. Un lector de pantalla puede no conectar el mensaje de error con el campo que lo produjo.
-**Recomendación:** Agregar `id="search-error"` al `<p>` del error y `aria-describedby="search-error"` al input condicionalmente cuando `geocodeError` existe.
+**[ADVERTENCIA] Mensaje de error no asociado al input**
+- Líneas: 61–64
+- Problema: El párrafo de error no está vinculado al input mediante `aria-describedby`.
+- Recomendación: Asignar `id="geocode-error"` al párrafo y agregar `aria-describedby="geocode-error"` al input cuando el error exista.
 
----
-
-### DateFilter
-
-#### 🔴 Crítico — Labels no asociados a sus inputs (falta htmlFor/id)
-**Archivo:** `src/components/DateFilter.jsx:6-25`
-**Problema:** Los `<label>` "Desde" y "Hasta" no tienen `htmlFor` y los `<input type="date">` no tienen `id`. La asociación es solo visual. Los lectores de pantalla no establecen la relación semántica.
-**Recomendación:** Agregar `htmlFor="date-from"` al label "Desde" e `id="date-from"` al primer input. Ídem para el segundo con `htmlFor="date-to"` e `id="date-to"`.
-
-#### 🟡 Advertencia — Contraste insuficiente en labels con text-gray-500
-**Archivo:** `src/components/DateFilter.jsx:6,16`
-**Problema:** `text-gray-500` sobre fondo blanco produce un ratio de ~4.48:1, inferior al mínimo WCAG AA de 4.5:1 para texto normal. Los labels "Desde" y "Hasta" son texto pequeño.
-**Recomendación:** Cambiar `text-gray-500` a `text-gray-600` en los labels del filtro.
-
-#### 🟢 Sugerencia — Botón "Limpiar" sin descripción contextual
-**Archivo:** `src/components/DateFilter.jsx:27-33`
-**Problema:** El botón "Limpiar" no especifica qué está limpiando para usuarios de lectores de pantalla.
-**Recomendación:** Agregar `aria-label="Limpiar filtro de fechas"` al botón.
+**[ADVERTENCIA] Input deshabilitado durante geocodificación sin anuncio de estado**
+- Línea: 49
+- Problema: El input se deshabilita con `disabled={isGeocoding}` pero no hay feedback textual accesible que explique por qué.
+- Recomendación: Agregar `<span aria-live="polite" className="sr-only">` que anuncie "Obteniendo coordenadas, por favor espere." cuando `isGeocoding` sea `true`.
 
 ---
 
-### HistoryTable
+### MapPortlet.jsx
 
-#### 🟡 Advertencia — Estado de carga (skeleton) sin anuncio accesible
-**Archivo:** `src/components/HistoryTable.jsx:4-11`
-**Problema:** Los divs animados con `animate-pulse` no tienen texto ni región `aria-live` que anuncie que el contenido está cargando.
-**Recomendación:** Agregar `<p className="sr-only" aria-live="polite">Cargando historial...</p>` dentro del estado de carga.
+**[ADVERTENCIA] `<iframe>` con título genérico**
+- Línea: 13
+- Problema: `title="Mapa"` es insuficientemente descriptivo. El usuario de screen reader no sabe qué mapa es ni qué ubicación muestra.
+- Recomendación: Usar título dinámico como `title="Mapa de ubicación: {address}"`.
 
-#### 🟡 Advertencia — Estado vacío sin aria-live
-**Archivo:** `src/components/HistoryTable.jsx:14-17`
-**Problema:** El párrafo "No hay consultas registradas." puede no ser anunciado al actualizarse dinámicamente (por ejemplo, al filtrar por fecha).
-**Recomendación:** Envolver en un contenedor con `aria-live="polite"` o agregar el atributo directamente al `<p>`.
+**[ADVERTENCIA] Mapa inaccesible para usuarios de teclado — sin alternativa textual**
+- Líneas: 10–19
+- Problema: Google Maps embed no es operable por teclado. No se ofrece alternativa textual de las coordenadas mostradas.
+- Recomendación: Agregar elemento oculto con las coordenadas en texto: "Mapa mostrando latitud X, longitud Y".
 
-#### 🟡 Advertencia — Botones de paginación sin contexto para lectores de pantalla
-**Archivo:** `src/components/HistoryTable.jsx:56-74`
-**Problema:** Los botones "Anterior" y "Siguiente" no comunican la página actual ni el destino.
-**Recomendación:** Agregar `aria-label="Ir a la página anterior"` / `aria-label="Ir a la página siguiente"`. Envolver la paginación en `<nav aria-label="Paginación del historial">`.
-
-#### 🟢 Sugerencia — Celda de dirección truncada sin title completo
-**Archivo:** `src/components/HistoryTable.jsx:39`
-**Problema:** La celda con `max-w-xs truncate` no permite ver el texto completo visualmente.
-**Recomendación:** Agregar `title={item.address}` a la `<td>`.
-
-#### 🟢 Sugerencia — Tabla sin caption ni aria-label
-**Archivo:** `src/components/HistoryTable.jsx:27`
-**Problema:** La `<table>` no tiene `<caption>` ni `aria-label`. Los lectores de pantalla anuncian "tabla" sin contexto.
-**Recomendación:** Agregar `aria-label="Historial de consultas de geocodificación"` a la `<table>`.
+**[SUGERENCIA] Animaciones del mapa sin consideración de `prefers-reduced-motion`**
+- Línea: 11–18
+- Problema: El iframe puede contener animaciones de Google que no respetan la preferencia del usuario.
+- Recomendación: Documentar la limitación conocida del enfoque iframe embed.
 
 ---
 
-### MapPortlet
+### HistoryTable.jsx
 
-#### 🟢 Sugerencia — iframe con title genérico
-**Archivo:** `src/components/MapPortlet.jsx:13`
-**Problema:** `title="Mapa"` es funcional pero genérico. Cuando hay una ubicación activa no comunica qué lugar se muestra.
-**Recomendación:** Recibir prop `address` y usar `title={address ? \`Mapa de ${address}\` : 'Mapa de ubicación predeterminada'}`.
+**[CRÍTICO] Estado de carga sin anuncio accesible**
+- Líneas: 4–11
+- Problema: Los skeleton loaders no tienen `role="status"` ni texto para screen readers. El área parece vacía para usuarios de AT.
+- Recomendación: Envolver los skeletons en `<div role="status"><span className="sr-only">Cargando historial de consultas...</span>`.
+
+**[CRÍTICO] Tabla sin `scope` en encabezados de columna**
+- Líneas: 29–34
+- Problema: Los `<th>` no tienen `scope="col"`. Los lectores de pantalla no pueden asociar correctamente encabezados con celdas.
+- Recomendación: Agregar `scope="col"` a todos los `<th>`.
+
+**[ADVERTENCIA] Celda de dirección truncada sin texto completo accesible**
+- Línea: 39
+- Problema: `max-w-xs truncate` corta el texto visualmente sin exponer el valor completo a AT.
+- Recomendación: Agregar `title={item.address}` a la `<td>`.
+
+**[ADVERTENCIA] Botones de paginación sin contexto descriptivo**
+- Líneas: 56–74
+- Problema: "Anterior" y "Siguiente" son ambiguos para usuarios que navegan por botones sin contexto visual.
+- Recomendación: Agregar `aria-label="Ir a la página anterior"` y `aria-label="Ir a la página siguiente"`.
+
+**[SUGERENCIA] Tabla sin `caption` o `aria-label`**
+- Línea: 27
+- Problema: La `<table>` no está programáticamente asociada a su encabezado de sección.
+- Recomendación: Agregar `aria-label="Historial de consultas de geocodificación"` a la `<table>`.
 
 ---
 
-### HomePage
+### DateFilter.jsx
 
-#### 🟢 Sugerencia — Resultado de geocodificación sin aria-live
-**Archivo:** `src/pages/HomePage.jsx:41-46`
-**Problema:** El bloque con latitud/longitud aparece dinámicamente tras seleccionar una sugerencia pero no tiene `aria-live`. Los lectores de pantalla no notifican el nuevo resultado.
-**Recomendación:** Envolver en `<div aria-live="polite" aria-atomic="true">`. Mantener el div en el DOM cuando `currentResult` es null para que la región viva ya esté registrada.
+**[CRÍTICO] Labels no asociados programáticamente a sus inputs**
+- Líneas: 6–13 y 15–23
+- Problema: Los `<label>` no tienen `htmlFor` y los `<input>` no tienen `id`. Los lectores de pantalla no anuncian el label al enfocar el input.
+- Recomendación: Agregar `htmlFor="date-from"` / `id="date-from"` y `htmlFor="date-to"` / `id="date-to"`.
+
+**[ADVERTENCIA] Botón "Limpiar" sin contexto descriptivo**
+- Líneas: 26–33
+- Problema: El texto "Limpiar" es ambiguo fuera de contexto visual.
+- Recomendación: Agregar `aria-label="Limpiar filtros de fecha"`.
+
+**[SUGERENCIA] Inputs de fecha sin instrucciones de formato**
+- Líneas: 7–13 y 16–24
+- Problema: No hay comunicación textual de restricciones como `min={dateFrom}`.
 
 ---
 
-### index.html
+### HomePage.jsx
 
-#### 🔴 Crítico — lang="en" con contenido en español
-**Archivo:** `index.html:2`
-**Problema:** El atributo `lang="en"` no corresponde al idioma del contenido. Los lectores de pantalla pronunciarán el texto en español con reglas fonológicas del inglés.
-**Recomendación:** Cambiar a `<html lang="es">`.
+**[SUGERENCIA] Resultado de coordenadas sin región `aria-live`**
+- Líneas: 41–46
+- Problema: El bloque de latitud/longitud aparece condicionalmente sin `aria-live`. Los usuarios de screen reader no son notificados cuando las coordenadas se actualizan.
+- Recomendación: Envolver en `<div aria-live="polite" aria-atomic="true">`.
 
 ---
 
-## Componentes sin issues
+## Resumen por componente
 
-- `src/App.jsx` — Sin issues. Componente de envoltura trivial.
-- `src/main.jsx` — Sin issues. Uso correcto de `StrictMode` y `QueryClientProvider`.
+| Componente     | Críticos | Advertencias | Sugerencias |
+|----------------|----------|--------------|-------------|
+| SearchBox.jsx  | 4        | 3            | 0           |
+| MapPortlet.jsx | 0        | 2            | 1           |
+| HistoryTable   | 2        | 2            | 1           |
+| DateFilter.jsx | 1        | 1            | 1           |
+| HomePage.jsx   | 0        | 0            | 1           |
+| **Total**      | **7**    | **8**        | **4**       |
+
+---
+
+## Conclusión
+
+El issue más crítico es la ausencia total de soporte de teclado en el dropdown de `SearchBox`, que bloquea la funcionalidad principal para usuarios sin ratón (WCAG 2.1.1, nivel A). Le siguen la falta de labels asociados en `DateFilter` (WCAG 1.3.1, nivel A) y la ausencia de `scope` en `HistoryTable` (WCAG 1.3.1).
+
+**Correcciones prioritarias antes de merge:**
+1. Navegación por teclado en el dropdown con `role="listbox"` / `role="option"` y `aria-activedescendant`
+2. `aria-live="polite"` en el dropdown de sugerencias
+3. Labels con `htmlFor` en DateFilter
+4. `scope="col"` en encabezados de HistoryTable
+5. `role="status"` con texto oculto en skeleton loader de HistoryTable
+6. `aria-label` o `id` en el input de búsqueda
+7. `aria-describedby` para el mensaje de error en SearchBox
