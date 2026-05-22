@@ -98,42 +98,30 @@ public static class MapsEndpoints
         try
         {
             var client = httpClientFactory.CreateClient("GoogleMaps");
-            var url = $"https://maps.googleapis.com/maps/api/geocode/json" +
-                      $"?place_id={Uri.EscapeDataString(request.PlaceId)}";
+            var url = $"https://places.googleapis.com/v1/places/{Uri.EscapeDataString(request.PlaceId)}";
 
             var httpRequest = new HttpRequestMessage(HttpMethod.Get, url);
             httpRequest.Headers.Add("X-Goog-Api-Key", apiKey);
+            httpRequest.Headers.Add("X-Goog-FieldMask", "location");
             var response = await client.SendAsync(httpRequest);
             var body = await response.Content.ReadAsStringAsync();
 
             if (!response.IsSuccessStatusCode)
             {
-                logger.LogError("Geocoding API error {Status}: {Body}", response.StatusCode, body);
-                return Results.Problem("Error calling Geocoding API", statusCode: 502);
+                logger.LogError("Places Details API error {Status}: {Body}", response.StatusCode, body);
+                return Results.Problem("Error calling Places Details API", statusCode: 502);
             }
 
             var doc = JsonDocument.Parse(body);
-            var status = doc.RootElement.GetProperty("status").GetString();
 
-            if (status != "OK")
+            if (!doc.RootElement.TryGetProperty("location", out var location))
             {
-                logger.LogError("Geocoding API returned status: {Status}", status);
-                return Results.Problem($"Geocoding API returned: {status}", statusCode: 502);
+                logger.LogWarning("Places Details API returned no location for placeId: {PlaceId}", request.PlaceId);
+                return Results.Problem(title: "No location found for the given place", statusCode: 404);
             }
 
-            var results = doc.RootElement.GetProperty("results");
-            if (results.GetArrayLength() == 0)
-            {
-                logger.LogWarning("Geocoding API returned OK but empty results for placeId: {PlaceId}", request.PlaceId);
-                return Results.Problem(title: "No results found for the given place", statusCode: 404);
-            }
-
-            var location = results[0]
-                .GetProperty("geometry")
-                .GetProperty("location");
-
-            var lat = location.GetProperty("lat").GetDecimal();
-            var lng = location.GetProperty("lng").GetDecimal();
+            var lat = location.GetProperty("latitude").GetDecimal();
+            var lng = location.GetProperty("longitude").GetDecimal();
 
             var requestPayload = JsonSerializer.Serialize(
                 new { placeId = request.PlaceId, address = request.Address },
