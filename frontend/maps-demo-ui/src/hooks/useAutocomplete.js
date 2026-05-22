@@ -16,7 +16,7 @@ export function useAutocomplete(input, sessionToken) {
       });
       return data;
     },
-    enabled: !!debouncedInput && debouncedInput.trim().length >= 3,
+    enabled: !!debouncedInput && debouncedInput.trim().length >= 3 && !!sessionToken,
     staleTime: 30_000,
   });
 }
