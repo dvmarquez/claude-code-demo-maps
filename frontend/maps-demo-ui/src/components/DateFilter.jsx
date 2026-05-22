@@ -3,8 +3,9 @@ export function DateFilter({ dateFrom, dateTo, onChange }) {
     <div className="flex flex-wrap items-center gap-4">
       <span className="text-sm font-medium text-gray-600">Filtrar por fecha:</span>
       <div className="flex items-center gap-2">
-        <label className="text-sm text-gray-500">Desde</label>
+        <label htmlFor="date-from" className="text-sm text-gray-500">Desde</label>
         <input
+          id="date-from"
           type="date"
           value={dateFrom}
           onChange={(e) => onChange({ dateFrom: e.target.value, dateTo })}
@@ -13,8 +14,9 @@ export function DateFilter({ dateFrom, dateTo, onChange }) {
         />
       </div>
       <div className="flex items-center gap-2">
-        <label className="text-sm text-gray-500">Hasta</label>
+        <label htmlFor="date-to" className="text-sm text-gray-500">Hasta</label>
         <input
+          id="date-to"
           type="date"
           value={dateTo}
           min={dateFrom}

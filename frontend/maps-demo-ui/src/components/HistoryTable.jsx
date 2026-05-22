@@ -3,10 +3,13 @@ import dayjs from 'dayjs';
 export function HistoryTable({ data, page, totalPages, totalCount, isLoading, onPageChange }) {
   if (isLoading) {
     return (
-      <div className="space-y-2">
-        {[...Array(5)].map((_, i) => (
-          <div key={i} className="h-10 bg-gray-100 rounded animate-pulse" />
-        ))}
+      <div role="status">
+        <span className="sr-only">Cargando historial de consultas...</span>
+        <div className="space-y-2" aria-hidden="true">
+          {[...Array(5)].map((_, i) => (
+            <div key={i} className="h-10 bg-gray-100 rounded animate-pulse" />
+          ))}
+        </div>
       </div>
     );
   }
@@ -27,10 +30,10 @@ export function HistoryTable({ data, page, totalPages, totalCount, isLoading, on
         <table className="w-full text-sm text-left">
           <thead className="bg-gray-50 text-gray-600 uppercase text-xs">
             <tr>
-              <th className="px-4 py-3">Dirección</th>
-              <th className="px-4 py-3 text-right">Latitud</th>
-              <th className="px-4 py-3 text-right">Longitud</th>
-              <th className="px-4 py-3 text-right">Fecha y hora</th>
+              <th scope="col" className="px-4 py-3">Dirección</th>
+              <th scope="col" className="px-4 py-3 text-right">Latitud</th>
+              <th scope="col" className="px-4 py-3 text-right">Longitud</th>
+              <th scope="col" className="px-4 py-3 text-right">Fecha y hora</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">

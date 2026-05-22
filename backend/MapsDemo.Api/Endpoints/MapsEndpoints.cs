@@ -23,7 +23,13 @@ public static class MapsEndpoints
         ILogger<Program> logger)
     {
         if (string.IsNullOrWhiteSpace(request.Input))
-            return Results.BadRequest(new { title = "Input is required" });
+            return Results.Problem(title: "Input is required", statusCode: 400);
+
+        if (request.Input.Trim().Length < 3)
+            return Results.Problem(title: "Input must be at least 3 characters", statusCode: 400);
+
+        if (string.IsNullOrWhiteSpace(request.SessionToken) || !Guid.TryParse(request.SessionToken, out _))
+            return Results.Problem(title: "SessionToken must be a valid UUID", statusCode: 400);
 
         var apiKey = Environment.GetEnvironmentVariable("GOOGLE_MAPS_API_KEY");
         if (string.IsNullOrEmpty(apiKey))
@@ -80,7 +86,10 @@ public static class MapsEndpoints
         ILogger<Program> logger)
     {
         if (string.IsNullOrWhiteSpace(request.PlaceId))
-            return Results.BadRequest(new { title = "PlaceId is required" });
+            return Results.Problem(title: "PlaceId is required", statusCode: 400);
+
+        if (string.IsNullOrWhiteSpace(request.SessionToken) || !Guid.TryParse(request.SessionToken, out _))
+            return Results.Problem(title: "SessionToken must be a valid UUID", statusCode: 400);
 
         var apiKey = Environment.GetEnvironmentVariable("GOOGLE_MAPS_API_KEY");
         if (string.IsNullOrEmpty(apiKey))
@@ -90,9 +99,11 @@ public static class MapsEndpoints
         {
             var client = httpClientFactory.CreateClient("GoogleMaps");
             var url = $"https://maps.googleapis.com/maps/api/geocode/json" +
-                      $"?place_id={Uri.EscapeDataString(request.PlaceId)}&key={apiKey}";
+                      $"?place_id={Uri.EscapeDataString(request.PlaceId)}";
 
-            var response = await client.GetAsync(url);
+            var httpRequest = new HttpRequestMessage(HttpMethod.Get, url);
+            httpRequest.Headers.Add("X-Goog-Api-Key", apiKey);
+            var response = await client.SendAsync(httpRequest);
             var body = await response.Content.ReadAsStringAsync();
 
             if (!response.IsSuccessStatusCode)
@@ -110,8 +121,14 @@ public static class MapsEndpoints
                 return Results.Problem($"Geocoding API returned: {status}", statusCode: 502);
             }
 
-            var location = doc.RootElement
-                .GetProperty("results")[0]
+            var results = doc.RootElement.GetProperty("results");
+            if (results.GetArrayLength() == 0)
+            {
+                logger.LogWarning("Geocoding API returned OK but empty results for placeId: {PlaceId}", request.PlaceId);
+                return Results.Problem(title: "No results found for the given place", statusCode: 404);
+            }
+
+            var location = results[0]
                 .GetProperty("geometry")
                 .GetProperty("location");
 
