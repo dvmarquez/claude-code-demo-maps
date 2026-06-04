@@ -39,6 +39,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
                 .HasColumnName("queried_at")
                 .HasDefaultValueSql("now()")
                 .IsRequired();
+            entity.HasIndex(e => e.QueriedAt)
+                .HasDatabaseName("ix_geocode_queries_queried_at");
         });
     }
 }

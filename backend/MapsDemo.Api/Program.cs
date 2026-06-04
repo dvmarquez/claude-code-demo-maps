@@ -1,8 +1,9 @@
+using dotenv.net;
+using MapsDemo.Api;
 using MapsDemo.Api.Data;
 using MapsDemo.Api.Endpoints;
 using Microsoft.EntityFrameworkCore;
 
-// Load .env by searching up the directory tree from known locations
 var envCandidates = new[]
 {
     Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), ".env")),
@@ -13,25 +14,23 @@ var envCandidates = new[]
 
 var envFile = envCandidates.FirstOrDefault(File.Exists);
 if (envFile is not null)
-{
-    foreach (var line in File.ReadAllLines(envFile))
-    {
-        if (string.IsNullOrWhiteSpace(line) || line.StartsWith('#')) continue;
-        var idx = line.IndexOf('=');
-        if (idx < 0) continue;
-        Environment.SetEnvironmentVariable(line[..idx].Trim(), line[(idx + 1)..].Trim());
-    }
-}
+    DotEnv.Load(options: new DotEnvOptions(envFilePaths: [envFile]));
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddOpenApi();
 
+var corsOrigin = Environment.GetEnvironmentVariable("CORS_ALLOWED_ORIGIN") ?? "http://localhost:5173";
 builder.Services.AddCors(options =>
     options.AddDefaultPolicy(policy =>
-        policy.WithOrigins("http://localhost:5173")
+        policy.WithOrigins(corsOrigin)
               .AllowAnyHeader()
               .AllowAnyMethod()));
+
+var apiKey = Environment.GetEnvironmentVariable("GOOGLE_MAPS_API_KEY");
+if (string.IsNullOrEmpty(apiKey))
+    throw new InvalidOperationException("GOOGLE_MAPS_API_KEY environment variable is not set.");
+builder.Services.AddSingleton(new MapsApiSettings(apiKey));
 
 var connectionString = Environment.GetEnvironmentVariable("POSTGRES_CONNECTION_STRING")
     ?? $"Host=localhost;Port=5432;" +

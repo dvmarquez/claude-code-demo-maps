@@ -64,6 +64,9 @@ namespace MapsDemo.Api.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("QueriedAt")
+                        .HasDatabaseName("ix_geocode_queries_queried_at");
+
                     b.ToTable("geocode_queries", (string)null);
                 });
 #pragma warning restore 612, 618

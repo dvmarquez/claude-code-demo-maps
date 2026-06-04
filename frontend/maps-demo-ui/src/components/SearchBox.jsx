@@ -19,6 +19,8 @@ export function SearchBox({ onGeocodeSuccess }) {
   );
   const { mutate: geocode, isPending: isGeocoding, error: geocodeError } = useGeocode();
 
+  const isLoading = isLoadingAutocomplete || isGeocoding;
+
   const handleChange = (e) => {
     if (!sessionTokenRef.current) sessionTokenRef.current = uuidv4();
     setInput(e.target.value);
@@ -60,16 +62,18 @@ export function SearchBox({ onGeocodeSuccess }) {
 
   return (
     <div className="relative w-full">
+      <label htmlFor="address-search" className="sr-only">Buscar dirección</label>
       <div className="flex items-center gap-2">
         <input
           id="address-search"
           type="text"
           role="combobox"
-          aria-label="Buscar dirección"
           aria-autocomplete="list"
           aria-expanded={showDropdown && suggestions.length > 0}
           aria-controls="suggestions-listbox"
           aria-activedescendant={activeIndex >= 0 ? `suggestion-${activeIndex}` : undefined}
+          aria-busy={isLoading}
+          aria-describedby={geocodeError ? 'geocode-error' : undefined}
           value={input}
           onChange={handleChange}
           onFocus={() => input.length >= 3 && setShowDropdown(true)}
@@ -81,21 +85,23 @@ export function SearchBox({ onGeocodeSuccess }) {
                      focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent
                      disabled:bg-gray-100 disabled:cursor-wait"
         />
-        {(isLoadingAutocomplete || isGeocoding) && (
-          <div className="absolute right-3 top-1/2 -translate-y-1/2">
-            <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+        {isLoading && (
+          <div className="absolute right-3 top-1/2 -translate-y-1/2" aria-hidden="true">
+            <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full motion-safe:animate-spin" />
           </div>
         )}
       </div>
 
       {geocodeError && (
-        <p className="mt-1 text-sm text-red-600">
+        <p id="geocode-error" className="mt-1 text-sm text-red-600" role="alert">
           Error al obtener coordenadas. Intente de nuevo.
         </p>
       )}
 
       <div aria-live="polite" aria-atomic="true" className="sr-only">
-        {showDropdown && suggestions.length > 0
+        {isGeocoding
+          ? 'Obteniendo coordenadas...'
+          : showDropdown && suggestions.length > 0
           ? `${suggestions.length} sugerencia${suggestions.length !== 1 ? 's' : ''} disponible${suggestions.length !== 1 ? 's' : ''}. Use las flechas para navegar.`
           : ''}
       </div>

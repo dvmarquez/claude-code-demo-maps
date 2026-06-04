@@ -19,8 +19,10 @@ public static class MapsEndpoints
 
     private static async Task<IResult> HandleAutocomplete(
         AutocompleteRequest request,
+        MapsApiSettings mapsSettings,
         IHttpClientFactory httpClientFactory,
-        ILogger<Program> logger)
+        ILogger<Program> logger,
+        CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(request.Input))
             return Results.Problem(title: "Input is required", statusCode: 400);
@@ -31,9 +33,7 @@ public static class MapsEndpoints
         if (string.IsNullOrWhiteSpace(request.SessionToken) || !Guid.TryParse(request.SessionToken, out _))
             return Results.Problem(title: "SessionToken must be a valid UUID", statusCode: 400);
 
-        var apiKey = Environment.GetEnvironmentVariable("GOOGLE_MAPS_API_KEY");
-        if (string.IsNullOrEmpty(apiKey))
-            return Results.Problem("Google Maps API key not configured", statusCode: 500);
+        logger.LogInformation("Autocomplete request for input: {Input}", request.Input);
 
         try
         {
@@ -44,11 +44,11 @@ public static class MapsEndpoints
 
             var httpRequest = new HttpRequestMessage(HttpMethod.Post,
                 "https://places.googleapis.com/v1/places:autocomplete");
-            httpRequest.Headers.Add("X-Goog-Api-Key", apiKey);
+            httpRequest.Headers.Add("X-Goog-Api-Key", mapsSettings.ApiKey);
             httpRequest.Content = new StringContent(payload, Encoding.UTF8, "application/json");
 
-            var response = await client.SendAsync(httpRequest);
-            var body = await response.Content.ReadAsStringAsync();
+            var response = await client.SendAsync(httpRequest, cancellationToken);
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -70,6 +70,7 @@ public static class MapsEndpoints
                 }
             }
 
+            logger.LogInformation("Autocomplete returned {Count} suggestions for: {Input}", suggestions.Count, request.Input);
             return Results.Ok(suggestions);
         }
         catch (Exception ex)
@@ -82,18 +83,21 @@ public static class MapsEndpoints
     private static async Task<IResult> HandleGeocode(
         GeocodeRequest request,
         AppDbContext db,
+        MapsApiSettings mapsSettings,
         IHttpClientFactory httpClientFactory,
-        ILogger<Program> logger)
+        ILogger<Program> logger,
+        CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(request.PlaceId))
             return Results.Problem(title: "PlaceId is required", statusCode: 400);
 
+        if (request.PlaceId.Length > 500)
+            return Results.Problem(title: "PlaceId exceeds maximum allowed length", statusCode: 400);
+
         if (string.IsNullOrWhiteSpace(request.SessionToken) || !Guid.TryParse(request.SessionToken, out _))
             return Results.Problem(title: "SessionToken must be a valid UUID", statusCode: 400);
 
-        var apiKey = Environment.GetEnvironmentVariable("GOOGLE_MAPS_API_KEY");
-        if (string.IsNullOrEmpty(apiKey))
-            return Results.Problem("Google Maps API key not configured", statusCode: 500);
+        logger.LogInformation("Geocode request for placeId: {PlaceId}", request.PlaceId);
 
         try
         {
@@ -101,10 +105,10 @@ public static class MapsEndpoints
             var url = $"https://places.googleapis.com/v1/places/{Uri.EscapeDataString(request.PlaceId)}";
 
             var httpRequest = new HttpRequestMessage(HttpMethod.Get, url);
-            httpRequest.Headers.Add("X-Goog-Api-Key", apiKey);
+            httpRequest.Headers.Add("X-Goog-Api-Key", mapsSettings.ApiKey);
             httpRequest.Headers.Add("X-Goog-FieldMask", "location");
-            var response = await client.SendAsync(httpRequest);
-            var body = await response.Content.ReadAsStringAsync();
+            var response = await client.SendAsync(httpRequest, cancellationToken);
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -139,8 +143,10 @@ public static class MapsEndpoints
             };
 
             db.GeocodeQueries.Add(query);
-            await db.SaveChangesAsync();
+            await db.SaveChangesAsync(cancellationToken);
 
+            logger.LogInformation("Geocode successful for address: {Address}, lat: {Lat}, lng: {Lng}",
+                request.Address, lat, lng);
             return Results.Ok(new GeocodeResult(query.Id, query.Address, query.Latitude, query.Longitude, query.QueriedAt));
         }
         catch (Exception ex)
@@ -152,28 +158,48 @@ public static class MapsEndpoints
 
     private static async Task<IResult> HandleHistory(
         AppDbContext db,
+        ILogger<Program> logger,
+        CancellationToken cancellationToken,
         int page = 1,
         int pageSize = 10,
         DateTimeOffset? dateFrom = null,
         DateTimeOffset? dateTo = null)
     {
-        var query = db.GeocodeQueries.AsQueryable();
+        if (page < 1)
+            return Results.Problem(title: "Page must be >= 1", statusCode: 400);
 
-        if (dateFrom.HasValue)
-            query = query.Where(q => q.QueriedAt >= dateFrom.Value);
+        if (pageSize < 1 || pageSize > 100)
+            return Results.Problem(title: "pageSize must be between 1 and 100", statusCode: 400);
 
-        if (dateTo.HasValue)
-            query = query.Where(q => q.QueriedAt < dateTo.Value.AddDays(1));
+        logger.LogInformation("History request: page={Page}, pageSize={PageSize}, dateFrom={DateFrom}, dateTo={DateTo}",
+            page, pageSize, dateFrom, dateTo);
 
-        var totalCount = await query.CountAsync();
-        var data = await query
-            .OrderByDescending(q => q.QueriedAt)
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize)
-            .Select(q => new GeocodeResult(q.Id, q.Address, q.Latitude, q.Longitude, q.QueriedAt))
-            .ToListAsync();
+        try
+        {
+            var query = db.GeocodeQueries.AsQueryable();
 
-        var totalPages = (int)Math.Ceiling(totalCount / (double)pageSize);
-        return Results.Ok(new PagedResult<GeocodeResult>(data, page, pageSize, totalCount, totalPages));
+            if (dateFrom.HasValue)
+                query = query.Where(q => q.QueriedAt >= dateFrom.Value);
+
+            if (dateTo.HasValue)
+                query = query.Where(q => q.QueriedAt < dateTo.Value.AddDays(1));
+
+            var totalCount = await query.CountAsync(cancellationToken);
+            var data = await query
+                .OrderByDescending(q => q.QueriedAt)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .Select(q => new GeocodeResult(q.Id, q.Address, q.Latitude, q.Longitude, q.QueriedAt))
+                .ToListAsync(cancellationToken);
+
+            var totalPages = (int)Math.Ceiling(totalCount / (double)pageSize);
+            logger.LogInformation("History returned {Count} of {Total} records", data.Count, totalCount);
+            return Results.Ok(new PagedResult<GeocodeResult>(data, page, pageSize, totalCount, totalPages));
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "History query failed");
+            return Results.Problem("Internal error retrieving history", statusCode: 500);
+        }
     }
 }

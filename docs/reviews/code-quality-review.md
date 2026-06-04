@@ -1,164 +1,152 @@
 # Code Quality Review — MapsDemo.Api
 
-Fecha: 2026-05-22
+Fecha: 2026-06-04
 Branch: feature/maps-autocomplete-geocode-history
 
 ---
 
 ## Resumen
 
-- Total issues: 17
-- Críticos: 4
+- Total issues: 13
+- Críticos: 1
 - Advertencias: 7
-- Sugerencias: 6
+- Sugerencias: 5
 
 ---
 
-## Issues por archivo
+## Issues por Archivo
 
 ### Program.cs
 
 **[ADVERTENCIA] Carga manual del .env duplica lógica de AppDbContextFactory**
-- Línea: 6–24
-- Problema: `Program.cs` implementa su propio parser de `.env` con bucle manual, mientras que `AppDbContextFactory.cs` usa `dotenv.net`. La lógica existe dos veces con implementaciones distintas.
-- Recomendación: Centralizar usando `DotEnv.Load` de `dotenv.net` y eliminar el parser manual.
+- Líneas: 6–24
+- Problema: `Program.cs` implementa su propio parser de `.env` con bucle manual, mientras que `AppDbContextFactory.cs` usa `dotenv.net`. La misma responsabilidad está cubierta dos veces con implementaciones distintas. El parser manual no maneja valores con `=` dentro del valor (por ejemplo, cadenas de conexión con `Password=abc=123`), pues parte en el primer `=` encontrado.
+- Recomendación: Eliminar el parser manual y llamar a `DotEnv.Load` de `dotenv.net` en ambos lugares.
 
 **[ADVERTENCIA] Connection string construida sin validación de nulls**
-- Línea: 36–40
-- Problema: Si las variables de entorno no están configuradas, la cadena tendrá valores `null` incrustados sin advertencia. La aplicación arranca pero falla al primer acceso a BD.
-- Recomendación: Validar que la configuración sea completa antes de registrar el `DbContext`, lanzando excepción descriptiva en startup.
+- Líneas: 36–40
+- Problema: Si `POSTGRES_CONNECTION_STRING` no está definida y alguna de `POSTGRES_DB`, `POSTGRES_USER` o `POSTGRES_PASSWORD` tampoco lo está, la cadena de conexión contendrá el literal `null` incrustado. La aplicación arranca sin error, pero falla al primer acceso a la base de datos con un mensaje de error poco descriptivo.
+- Recomendación: Validar que la configuración esté completa antes de registrar el `DbContext`; lanzar una excepción descriptiva en startup si falta alguna variable obligatoria.
 
-**[SUGERENCIA] CORS fijo para `http://localhost:5173` sin configuración por entorno**
-- Línea: 30–34
-- Problema: El origen está hardcodeado y requiere recompilación para cambiar.
-- Recomendación: Leer el origen de `appsettings.json` o variable de entorno `ALLOWED_ORIGIN`.
-
-**[SUGERENCIA] Migraciones no se aplican automáticamente en startup**
-- Línea: 47
-- Problema: No hay `db.Database.MigrateAsync()` en startup. El paso es manual y puede omitirse.
-- Recomendación: Considerar aplicación automática de migraciones en desarrollo, controlada por configuración.
+**[ADVERTENCIA] CORS hardcodeado para un único origen**
+- Líneas: 30–34
+- Problema: El origen `http://localhost:5173` está fijo en código. Requiere recompilación para ajustarlo en otro entorno (staging, producción). Además, solo cubre HTTP; si el frontend corre en HTTPS la política bloquea los requests.
+- Recomendación: Leer el origen desde `appsettings.json` o una variable de entorno (`ALLOWED_ORIGINS`), permitiendo una lista separada por comas para mayor flexibilidad.
 
 ---
 
 ### Endpoints/MapsEndpoints.cs
 
-**[CRÍTICO] API key de Google Maps expuesta en URL del Geocoding API**
-- Línea: 92–93
-- Problema: La llamada a Geocoding API construye la URL con `?key={apiKey}`. La key queda expuesta en logs del servidor, historial del HttpClient y logs de red/proxy. La Places API v1 la envía correctamente como header `X-Goog-Api-Key`.
-- Recomendación: Usar el header `X-Goog-Api-Key` también para Geocoding API, igual que se hace en autocomplete.
+**[CRÍTICO] HandleHistory sin manejo de excepciones ni ILogger**
+- Líneas: 153–178
+- Problema: Es el único handler que carece de bloque `try/catch` e `ILogger`. Cualquier error de base de datos (timeout, pérdida de conexión, excepción de EF Core) propaga una excepción no controlada hacia el middleware. ASP.NET devuelve un 500 genérico sin formato `ProblemDetails` y sin log estructurado, lo que hace imposible diagnosticar el problema en producción.
+- Recomendación: Inyectar `ILogger<Program> logger` en el handler, envolver el cuerpo en `try/catch` y retornar `Results.Problem("Internal error fetching history", statusCode: 500)` en el bloque catch con `logger.LogError(ex, "History query failed")`.
 
-**[CRÍTICO] Validación de input en autocomplete sin longitud mínima**
-- Línea: 25–26
-- Problema: Solo se valida que `Input` no sea nulo. No se aplica el mínimo de 3 caracteres definido en el proyecto. Una sola letra genera requests a Google con costo innecesario.
-- Recomendación: Agregar `if (request.Input.Trim().Length < 3) return Results.Problem(...)`.
-
-**[CRÍTICO] SessionToken no validado como UUID v4**
-- Línea: 20–74, 76–146
-- Problema: El `sessionToken` se acepta y reenvía a Google sin validación de formato. El proyecto especifica "sessionToken validado como UUID v4 antes de procesar".
-- Recomendación: Agregar `if (!Guid.TryParse(request.SessionToken, out _)) return Results.BadRequest(...)`.
-
-**[CRÍTICO] Desreferencia sin guardia en `results[0]` puede lanzar excepción**
-- Línea: 113–116
-- Problema: Cuando Geocoding API retorna `status == "OK"` pero `results` es array vacío (documentado por Google como posible), `results[0]` lanza excepción. El `try/catch` captura el error como "Geocode failed" sin distinción.
-- Recomendación: Verificar que el array `results` tenga al menos un elemento antes de acceder al índice 0. Retornar 404 o 422 con mensaje descriptivo si está vacío.
-
-**[ADVERTENCIA] BadRequest sin ProblemDetails RFC 9457**
-- Líneas: 26, 83
-- Problema: Las respuestas de validación usan `Results.BadRequest(new { title = "..." })` (objeto anónimo) en vez de `ProblemDetails`. Rompe consistencia con el resto del código.
-- Recomendación: Reemplazar con `Results.Problem(title: "...", statusCode: 400)`.
+**[ADVERTENCIA] pageSize sin límite superior y page sin validación de mínimo**
+- Líneas: 155–156
+- Problema: Un cliente puede enviar `pageSize=1000000`, lo que fuerza a EF Core a cargar millones de filas en memoria. Asimismo, `page=0` produce `.Skip(-pageSize)`, que puede arrojar excepción en el proveedor de base de datos o devolver datos inesperados.
+- Recomendación: Agregar validación explícita antes de ejecutar la consulta:
+  ```csharp
+  if (page < 1) return Results.Problem(title: "page must be >= 1", statusCode: 400);
+  if (pageSize < 1 || pageSize > 100) return Results.Problem(title: "pageSize must be between 1 and 100", statusCode: 400);
+  ```
 
 **[ADVERTENCIA] API key leída en cada request, no en startup**
-- Líneas: 28–30, 85–87
-- Problema: `Environment.GetEnvironmentVariable("GOOGLE_MAPS_API_KEY")` se llama en cada invocación. El error de configuración se descubre en runtime durante el primer request.
-- Recomendación: Leer la API key una vez en startup, validar que no sea nula, e inyectarla via DI.
+- Líneas: 34–36, 94–96
+- Problema: `Environment.GetEnvironmentVariable("GOOGLE_MAPS_API_KEY")` se invoca en cada request. El error de configuración se descubre en runtime durante la primera llamada, no durante el arranque. Adicionalmente, la variable se lee dos veces (una por endpoint) cuando podría centralizarse.
+- Recomendación: Leer y validar la API key en `Program.cs` durante el arranque (fallando con excepción descriptiva si no está configurada) e inyectarla vía `IOptions<T>` o como string nombrado a través de DI.
 
 **[ADVERTENCIA] Ausencia de logs en paths exitosos**
-- Líneas: 20–74, 76–146, 148–173
-- Problema: Solo se loguea en errores. No hay `LogInformation` al inicio de cada handler ni al retornar resultado exitoso, dificultando el trazado en producción.
-- Recomendación: Agregar log de inicio (sin loguear datos del usuario) y log de resultado exitoso en cada handler.
+- Líneas: 20, 82, 153
+- Problema: Solo se registran eventos de error. No existe `LogInformation` al inicio de cada handler ni al retornar un resultado exitoso. Esto dificulta trazar el flujo completo en producción y correlacionar requests con respuestas de Google.
+- Recomendación: Agregar al inicio de cada handler un log de nivel `Information` con el nombre de la operación (sin incluir datos sensibles del usuario) y otro al completar exitosamente, indicando el número de resultados o el ID persistido.
 
-**[ADVERTENCIA] HandleHistory sin ILogger ni manejo de excepciones**
-- Línea: 148–173
-- Problema: Es el único handler sin `ILogger` ni `try/catch`. Una falla de BD propaga un 500 sin formato `ProblemDetails` ni log estructurado.
-- Recomendación: Agregar `ILogger<Program> logger`, envolver en `try/catch`, retornar `Results.Problem(...)` en el catch.
+**[ADVERTENCIA] PlaceId interpolado en URL sin validación de formato**
+- Línea: 101
+- Problema: `Uri.EscapeDataString` escapa caracteres especiales, pero no valida que `PlaceId` tenga el formato esperado de Google (prefijo `places/` o similar). Un valor arbitrariamente largo o con caracteres inesperados se envía directamente a la API externa. Aunque el riesgo de inyección HTTP es bajo dado el escape, un `PlaceId` malformado genera una llamada innecesaria a Google que retorna 404.
+- Recomendación: Agregar una validación básica de longitud máxima (por ejemplo, 500 caracteres) y opcionalmente verificar que no esté vacío después del trim.
 
-**[ADVERTENCIA] `pageSize` sin límite superior**
-- Línea: 151
-- Problema: Un cliente puede pasar `pageSize=100000`, cargando toda la tabla en memoria.
-- Recomendación: Validar `if (pageSize < 1 || pageSize > 100) return Results.BadRequest(...)`.
-
-**[ADVERTENCIA] `page` no valida valores menores o iguales a cero**
-- Línea: 151
-- Problema: `page=0` produce `.Skip(-pageSize)`, generando excepción de BD o comportamiento indefinido.
-- Recomendación: Agregar `if (page < 1) return Results.BadRequest(...)`.
-
-**[SUGERENCIA] CancellationToken no propagado en handlers**
-- Líneas: 20, 76, 148
-- Problema: Si el cliente cancela la request, las llamadas a HttpClient y `SaveChangesAsync` continúan sin posibilidad de cancelación.
-- Recomendación: Agregar `CancellationToken cancellationToken` como parámetro final en cada handler y propagarlo.
-
-**[SUGERENCIA] ResponsePayload almacena el JSON completo de Google Maps**
-- Línea: 130
-- Problema: Se persiste el body completo de Geocoding API cuando solo se necesitan lat/lng. Genera almacenamiento innecesario.
-- Recomendación: Si no hay caso de uso documentado para el payload completo, almacenar solo los campos necesarios.
+**[SUGERENCIA] CancellationToken no propagado en ningún handler**
+- Líneas: 20, 82, 153
+- Problema: Si el cliente cancela la request HTTP, las llamadas a `client.SendAsync`, `db.SaveChangesAsync` y `query.CountAsync`/`ToListAsync` continúan ejecutándose hasta completar. Esto desperdicia recursos del hilo de trabajo y conexiones a la base de datos.
+- Recomendación: Agregar `CancellationToken cancellationToken` como parámetro final en cada handler y propagarlo a `SendAsync(httpRequest, cancellationToken)`, `SaveChangesAsync(cancellationToken)`, `CountAsync(cancellationToken)` y `ToListAsync(cancellationToken)`.
 
 ---
 
 ### Data/AppDbContext.cs
 
-**[ADVERTENCIA] Ausencia de índice en `queried_at`**
-- Línea: 38–41
-- Problema: La columna `queried_at` se usa en filtro (`WHERE`) y ordenamiento (`ORDER BY DESC`) sin índice. Cada query de historial realiza un sequential scan sobre toda la tabla.
-- Recomendación: Agregar en `OnModelCreating`: `entity.HasIndex(e => e.QueriedAt).HasDatabaseName("IX_geocode_queries_queried_at");` y generar la migración correspondiente.
+**[ADVERTENCIA] Ausencia de índice en queried_at**
+- Líneas: 38–41
+- Problema: La columna `queried_at` se usa en cláusulas `WHERE` (filtros `dateFrom`/`dateTo`) y en `ORDER BY DESC` dentro de `HandleHistory`. Sin índice, cada consulta de historial realiza un sequential scan completo de la tabla. El impacto es insignificante con pocos registros pero se vuelve crítico en producción a medida que la tabla crece.
+- Recomendación: Agregar en `OnModelCreating`:
+  ```csharp
+  entity.HasIndex(e => e.QueriedAt)
+        .HasDatabaseName("IX_geocode_queries_queried_at");
+  ```
+  y generar la migración correspondiente con `dotnet ef migrations add AddIndexQueriedAt`.
 
 ---
 
 ### Data/AppDbContextFactory.cs
 
-**[SUGERENCIA] Inconsistencia en carga del .env vs Program.cs**
-- Línea: 1, 21
-- Problema: La factory usa `DotEnv.Load` de `dotenv.net` mientras `Program.cs` tiene su propio parser manual. Dos formas distintas de hacer lo mismo en el mismo proyecto.
-- Recomendación: Unificar usando `dotenv.net` en ambos lugares.
+**[SUGERENCIA] Inconsistencia en mecanismo de carga del .env**
+- Líneas: 1, 21
+- Problema: La factory usa `DotEnv.Load` de `dotenv.net` mientras `Program.cs` tiene su propio parser manual basado en `File.ReadAllLines`. Dos implementaciones distintas para el mismo propósito aumentan el riesgo de comportamiento diferente (por ejemplo, ante valores con `=` o espacios alrededor del signo igual).
+- Recomendación: Unificar usando `dotenv.net` en ambos archivos para consistencia y corrección.
 
 ---
 
 ### Data/GeocodeQuery.cs
 
-**[SUGERENCIA] Propiedades de entidad sin `required` keyword**
-- Línea: 6–8
-- Problema: Las propiedades string se inicializan a `string.Empty` para evitar nullable warnings, pero no expresan la intención de no-nulabilidad con la keyword `required` de C# 11.
-- Recomendación: Usar `public required string Address { get; set; }` para las propiedades obligatorias.
+**[SUGERENCIA] Propiedades string sin keyword required**
+- Líneas: 6–8
+- Problema: Las propiedades `Address`, `RequestPayload` y `ResponsePayload` se inicializan a `string.Empty` para satisfacer el análisis de nullability, pero esto oculta errores: si una propiedad queda sin asignar el código compila sin advertencia y persiste una cadena vacía.
+- Recomendación: Marcar las propiedades obligatorias con `required`:
+  ```csharp
+  public required string Address { get; set; }
+  ```
+  Esto hace que el compilador exija la asignación en todos los puntos de construcción.
 
 ---
 
-### DTOs
+### DTOs (AutocompleteRequest.cs, GeocodeRequest.cs)
 
-**[SUGERENCIA] DTOs de request sin DataAnnotations para validación declarativa**
+**[SUGERENCIA] Sin atributos de validación declarativa**
 - Archivos: `AutocompleteRequest.cs`, `GeocodeRequest.cs`
-- Problema: No hay atributos `[Required]`, `[MinLength(3)]`, etc. .NET 10 soporta validación declarativa via `WithParameterValidation()`.
-- Recomendación: Agregar atributos de validación y habilitar `WithParameterValidation()` en los endpoints.
+- Problema: Las validaciones de formato y longitud se implementan manualmente con `if/return` en cada handler. .NET 10 soporta validación declarativa mediante atributos `[Required]`, `[MinLength(3)]`, `[MaxLength(500)]` combinados con `WithParameterValidation()` en el registro del endpoint.
+- Recomendación: Agregar data annotations en los records y habilitar `app.MapPost(...).WithParameterValidation()`. Esto centraliza la validación, la hace visible en OpenAPI y elimina código repetitivo en los handlers.
 
 ---
 
 ### Migrations/20260507115624_InitialCreate.cs
 
-Sin issues críticos. La migración refleja correctamente el modelo. Se confirma la ausencia del índice en `queried_at` (reportado en AppDbContext.cs).
+Sin issues propios. La migración refleja correctamente el modelo definido en `AppDbContext`. Se confirma la ausencia del índice sobre `queried_at` (reportado en la sección de `AppDbContext.cs`).
 
 ---
 
-### Properties/launchSettings.json
+## Archivos Revisados
 
-Sin issues. El perfil `http` expone el puerto 5000 conforme al CLAUDE.md.
+- `Program.cs` — con advertencias
+- `Endpoints/MapsEndpoints.cs` — con advertencias y un crítico
+- `Data/AppDbContext.cs` — con advertencia
+- `Data/AppDbContextFactory.cs` — con sugerencia
+- `Data/GeocodeQuery.cs` — con sugerencia
+- `DTOs/AutocompleteRequest.cs` — con sugerencia
+- `DTOs/AutocompleteSuggestion.cs` — sin issues
+- `DTOs/GeocodeRequest.cs` — con sugerencia
+- `DTOs/GeocodeResult.cs` — sin issues
+- `DTOs/PagedResult.cs` — sin issues
+- `Migrations/20260507115624_InitialCreate.cs` — sin issues propios
 
 ---
 
 ## Conclusión
 
-El código base es funcional y sigue la mayoría de las convenciones del proyecto. Los cuatro issues críticos deben resolverse antes de cualquier despliegue:
+Respecto a la revisión anterior (2026-05-22), los cuatro issues críticos han sido resueltos correctamente:
 
-1. **API key en URL de Geocoding** — compromete la confidencialidad en entornos con logging habilitado
-2. **Sin validación de longitud mínima en autocomplete** — genera costos innecesarios en Google Maps
-3. **SessionToken sin validación UUID v4** — incumple un requisito explícito del proyecto
-4. **Acceso sin guardia a `results[0]`** — puede provocar excepciones no controladas
+- La API key de Google Maps ahora se envía como header `X-Goog-Api-Key` en ambos endpoints.
+- La validación de longitud mínima de 3 caracteres en autocomplete está implementada.
+- El sessionToken se valida como UUID con `Guid.TryParse` antes de procesar.
+- El acceso a `results[0]` fue reemplazado por la integración con Places Details API v1 que retorna un objeto único.
 
-Entre las advertencias, la ausencia de índice en `queried_at` es la de mayor impacto en performance a medida que la tabla crezca, y la falta de límite en `pageSize` representa un vector de abuso de recursos.
+El único issue crítico restante es `HandleHistory` sin manejo de excepciones, que puede producir respuestas malformadas ante fallos de base de datos. Las advertencias de mayor impacto operativo son la ausencia del índice en `queried_at` y la falta de validación de `pageSize`, que representan vectores de degradación de performance en producción.
